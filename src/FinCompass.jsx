@@ -19,16 +19,10 @@ import {
 
 /* ==================================================================== *
  * FinCompass — a personal financial decision engine.
- *
- * The design carries one idea: money you are CERTAIN about and money you
- * only EXPECT are different things, and confusing them is the root of most
- * bad financial decisions. Guaranteed outcomes (clearing a 42% card, an EMI
- * you contractually owe) are teal. Modelled outcomes (a 12% equity
- * assumption, a projected corpus) are indigo and always hedged in words.
- * Nothing on this screen mixes the two without saying so.
  * ==================================================================== */
 
-const C = {
+const LIGHT_THEME = {
+  isDark: false,
   paper: "#EEF2F7",
   card: "#FFFFFF",
   ink: "#16202E",
@@ -46,12 +40,27 @@ const C = {
   warnBg: "#FBF0E2",
 };
 
-const URGENCY_COLOR = {
-  critical: C.danger,
-  high: C.warn,
-  medium: C.ink2,
-  low: C.faint,
+const DARK_THEME = {
+  isDark: true,
+  paper: "#0B1320", // Deep dark background
+  card: "#162234",  // Rich slate dark card
+  ink: "#F1F5F9",   // Bright crisp heading text
+  ink2: "#CBD5E1",  // Secondary text
+  muted: "#94A3B8", // Soft muted text
+  faint: "#64748B", // Faint label text
+  rule: "#26354A",  // Subtle border line
+  sure: "#14B8A6",  // Vibrant teal
+  sureBg: "#064E3B",// Dark teal background
+  model: "#818CF8", // Vibrant indigo
+  modelBg: "#312E81",// Dark indigo background
+  danger: "#F87171",// Bright red
+  dangerBg: "#7F1D1D",// Dark red background
+  warn: "#FBBF24",  // Bright amber
+  warnBg: "#78350F", // Dark amber background
 };
+
+const ThemeContext = React.createContext(LIGHT_THEME);
+const useTheme = () => React.useContext(ThemeContext);
 
 const FONT =
   '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif';
@@ -852,17 +861,6 @@ function compareDebtVsInvest({ outstanding, ratePct, emi, extra, returnPct, spli
   };
 }
 
-function calcFire(d, p, scenario = "moderate") {
-  const mult = { conservative: 30, moderate: 25, aggressive: 20 }[scenario];
-  const annualLiving = p.living * 12;
-  const targetCorpus = annualLiving * mult;
-  const current = p.totalInvestments + p.liquidSavings;
-  const gap = Math.max(0, targetCorpus - current);
-  const ret = { conservative: 9, moderate: 11, aggressive: 13 }[scenario];
-  const yrs = yearsToTarget(targetCorpus, current, p.sip, ret) || 30;
-  return { scenario, mult, targetCorpus, current, gap, yrs, annualLiving };
-}
-
 /* ---------------------------------------------------------------- */
 /* Templates & Sample Data                                           */
 /* ---------------------------------------------------------------- */
@@ -989,6 +987,7 @@ const BLANK_TEMPLATE = {
 /* ================================================================== */
 
 function Card({ children, className = "", pad = "p-5", style }) {
+  const C = useTheme();
   return (
     <div
       className={`rounded-xl ${pad} ${className}`}
@@ -1000,6 +999,7 @@ function Card({ children, className = "", pad = "p-5", style }) {
 }
 
 function SectionTitle({ children, sub, action }) {
+  const C = useTheme();
   return (
     <div className="mb-4 flex items-start justify-between gap-4">
       <div>
@@ -1014,6 +1014,7 @@ function SectionTitle({ children, sub, action }) {
 }
 
 function Certainty({ kind }) {
+  const C = useTheme();
   const sure = kind === "guaranteed";
   return (
     <span
@@ -1033,6 +1034,7 @@ function Certainty({ kind }) {
 }
 
 function Stat({ label, value, hint, tone }) {
+  const C = useTheme();
   return (
     <div>
       <div className="text-xs" style={{ color: C.faint }}>{label}</div>
@@ -1047,18 +1049,22 @@ function Stat({ label, value, hint, tone }) {
   );
 }
 
-function Meter({ value, max, color = C.sure, height = 6, track = C.rule }) {
+function Meter({ value, max, color, height = 6, track }) {
+  const C = useTheme();
+  const meterTrack = track || C.rule;
+  const meterColor = color || C.sure;
   return (
-    <div className="w-full overflow-hidden rounded-full" style={{ height, background: track }}>
+    <div className="w-full overflow-hidden rounded-full" style={{ height, background: meterTrack }}>
       <div
         className="h-full rounded-full transition-all"
-        style={{ width: `${Math.min(100, Math.max(0, (value / (max || 1)) * 100))}%`, background: color }}
+        style={{ width: `${Math.min(100, Math.max(0, (value / (max || 1)) * 100))}%`, background: meterColor }}
       />
     </div>
   );
 }
 
 function TextField({ label, value, onChange, placeholder = "", type = "text", hint }) {
+  const C = useTheme();
   return (
     <label className="block">
       <span className="text-xs font-medium" style={{ color: C.muted }}>{label}</span>
@@ -1076,6 +1082,7 @@ function TextField({ label, value, onChange, placeholder = "", type = "text", hi
 }
 
 function SelectField({ label, value, onChange, options = [] }) {
+  const C = useTheme();
   return (
     <label className="block">
       <span className="text-xs font-medium" style={{ color: C.muted }}>{label}</span>
@@ -1086,7 +1093,7 @@ function SelectField({ label, value, onChange, options = [] }) {
         style={{ borderColor: C.rule, color: C.ink, background: C.card }}
       >
         {options.map((o) => (
-          <option key={o.value} value={o.value}>{o.label}</option>
+          <option key={o.value} value={o.value} style={{ background: C.card, color: C.ink }}>{o.label}</option>
         ))}
       </select>
     </label>
@@ -1094,6 +1101,7 @@ function SelectField({ label, value, onChange, options = [] }) {
 }
 
 function NumberField({ label, value, onChange, min = 0, max, step = 500, prefix = "₹", hint }) {
+  const C = useTheme();
   return (
     <label className="block">
       <div className="flex items-baseline justify-between gap-2">
@@ -1118,6 +1126,7 @@ function NumberField({ label, value, onChange, min = 0, max, step = 500, prefix 
 }
 
 function Toggle({ options, value, onChange }) {
+  const C = useTheme();
   return (
     <div className="inline-flex rounded-lg p-0.5" style={{ background: C.paper, border: `1px solid ${C.rule}` }}>
       {options.map((o) => {
@@ -1131,7 +1140,7 @@ function Toggle({ options, value, onChange }) {
             style={{
               background: active ? C.card : "transparent",
               color: active ? C.ink : C.muted,
-              boxShadow: active ? "0 1px 2px rgba(22,32,46,0.08)" : "none",
+              boxShadow: active ? "0 1px 2px rgba(0,0,0,0.1)" : "none",
             }}
           >
             {o.label}
@@ -1142,24 +1151,15 @@ function Toggle({ options, value, onChange }) {
   );
 }
 
-function Assumptions({ items }) {
-  return (
-    <p className="mt-4 text-xs leading-relaxed" style={{ color: C.faint }}>
-      {items.join(" · ")}
-    </p>
-  );
-}
-
-const chartAxis = { fontSize: 11, fill: C.faint };
-
 function ChartTip({ active, payload, label, formatter }) {
+  const C = useTheme();
   if (!active || !payload || !payload.length) return null;
   return (
     <div
       className="rounded-lg px-3 py-2 text-xs shadow-lg"
-      style={{ background: C.ink, color: "#fff", ...NUM }}
+      style={{ background: C.ink, color: C.paper, ...NUM }}
     >
-      <div style={{ color: "#9FB1C6" }}>{label}</div>
+      <div style={{ color: C.muted }}>{label}</div>
       {payload.map((p) => (
         <div key={p.name} className="mt-0.5 flex items-center gap-2">
           <span className="inline-block h-2 w-2 rounded-sm" style={{ background: p.color }} />
@@ -1176,6 +1176,7 @@ function ChartTip({ active, payload, label, formatter }) {
 /* ================================================================== */
 
 function AllocationWaterfall({ allocation }) {
+  const C = useTheme();
   if (!allocation.buckets.length) return null;
   const palette = (b) => (b.certainty === "guaranteed" ? C.sure : C.model);
 
@@ -1189,7 +1190,7 @@ function AllocationWaterfall({ allocation }) {
               width: `${b.sharePct}%`,
               background: palette(b),
               opacity: 1 - i * 0.13,
-              borderRight: i < allocation.buckets.length - 1 ? "2px solid #fff" : "none",
+              borderRight: i < allocation.buckets.length - 1 ? `2px solid ${C.card}` : "none",
             }}
             title={`${b.target}: ${inr(b.amount)}`}
           />
@@ -1224,6 +1225,7 @@ function AllocationWaterfall({ allocation }) {
 }
 
 function DecideTab({ data, profile, health, recs, alerts, allocation }) {
+  const C = useTheme();
   const [windfall, setWindfall] = useState(100000);
   const windfallPlan = useMemo(
     () => allocate(data, profile, windfall, "windfall"),
@@ -1233,39 +1235,39 @@ function DecideTab({ data, profile, health, recs, alerts, allocation }) {
 
   return (
     <div className="space-y-6">
-      <div className="rounded-xl p-6 sm:p-7" style={{ background: C.ink, color: "#fff" }}>
-        <p className="text-sm" style={{ color: "#9FB1C6" }}>
-          Decision engine status for {data.personal?.name || "User"} ({data.personal?.city || "India"})
+      <div className="rounded-xl p-6 sm:p-7 shadow-sm border" style={{ background: C.card, borderColor: C.rule, color: C.ink }}>
+        <p className="text-sm" style={{ color: C.muted }}>
+          Decision engine status for <strong>{data.personal?.name || "User"}</strong> ({data.personal?.city || "India"})
         </p>
-        <p className="mt-1 text-lg font-medium" style={{ color: "#fff" }}>
+        <p className="mt-1 text-xl font-bold" style={{ color: C.ink }}>
           {allocation.constraint}
         </p>
 
         {top && (
-          <div className="mt-6 border-t pt-5" style={{ borderColor: "#2C3D53" }}>
+          <div className="mt-6 border-t pt-5" style={{ borderColor: C.rule }}>
             <div className="flex items-baseline gap-3">
               <span
                 className="rounded px-2 py-0.5 text-xs font-semibold"
-                style={{ background: URGENCY_COLOR[top.priority], color: "#fff" }}
+                style={{ background: top.priority === "critical" ? C.danger : top.priority === "high" ? C.warn : C.ink2, color: "#fff" }}
               >
                 Do this first
               </span>
               {top.monthlyAmount && (
-                <span className="text-sm" style={{ ...NUM, color: "#9FB1C6" }}>
+                <span className="text-sm" style={{ ...NUM, color: C.muted }}>
                   {inr(top.monthlyAmount)}/month
                 </span>
               )}
             </div>
             <h1
               className="mt-3 text-2xl font-semibold sm:text-3xl"
-              style={{ letterSpacing: "-0.025em", lineHeight: 1.15 }}
+              style={{ letterSpacing: "-0.025em", lineHeight: 1.15, color: C.ink }}
             >
               {top.action}
             </h1>
-            <p className="mt-3 max-w-2xl text-sm leading-relaxed" style={{ color: "#C3D0DE" }}>
+            <p className="mt-3 max-w-2xl text-sm leading-relaxed" style={{ color: C.muted }}>
               {top.reason}
             </p>
-            <p className="mt-3 text-sm font-medium" style={{ color: "#5FD9C0" }}>
+            <p className="mt-3 text-sm font-medium" style={{ color: C.sure }}>
               {top.impact}
             </p>
           </div>
@@ -1282,7 +1284,7 @@ function DecideTab({ data, profile, health, recs, alerts, allocation }) {
                 ? { bg: C.warnBg, fg: C.warn }
                 : { bg: C.paper, fg: C.ink2 };
             return (
-              <div key={a.id} className="rounded-lg p-3" style={{ background: tone.bg }}>
+              <div key={a.id} className="rounded-lg p-3 border" style={{ background: tone.bg, borderColor: C.rule }}>
                 <div className="text-sm font-medium" style={{ color: tone.fg }}>{a.title}</div>
                 <div className="mt-0.5 text-xs leading-relaxed" style={{ color: C.muted }}>{a.detail}</div>
               </div>
@@ -1318,10 +1320,11 @@ function DecideTab({ data, profile, health, recs, alerts, allocation }) {
 }
 
 /* ================================================================== */
-/* OTHER TABS (Plan, Health, NetWorth, Goals, DebtVsInvest, Grow, etc.)*/
+/* OTHER TABS                                                         */
 /* ================================================================== */
 
 function PlanTab({ data, profile, allocation, alerts }) {
+  const C = useTheme();
   return (
     <div className="space-y-6">
       <Card>
@@ -1342,7 +1345,7 @@ function PlanTab({ data, profile, allocation, alerts }) {
         </SectionTitle>
         <ul className="space-y-3">
           {allocation.buckets.map((b, i) => (
-            <li key={i} className="flex items-center justify-between rounded-lg border p-3" style={{ borderColor: C.rule }}>
+            <li key={i} className="flex items-center justify-between rounded-lg border p-3" style={{ borderColor: C.rule, background: C.paper }}>
               <div>
                 <div className="font-medium text-sm" style={{ color: C.ink }}>{b.target}</div>
                 <div className="text-xs" style={{ color: C.muted }}>{b.reason}</div>
@@ -1360,6 +1363,7 @@ function PlanTab({ data, profile, allocation, alerts }) {
 }
 
 function HealthTab({ health, profile }) {
+  const C = useTheme();
   return (
     <div className="space-y-6">
       <Card>
@@ -1392,6 +1396,7 @@ function HealthTab({ health, profile }) {
 }
 
 function NetWorthTab({ data, profile, portfolio }) {
+  const C = useTheme();
   return (
     <div className="space-y-6">
       <Card>
@@ -1413,7 +1418,7 @@ function NetWorthTab({ data, profile, portfolio }) {
           <Stat label="Illiquid Assets (EPF/PPF)" value={pct(portfolio.illiquidPct)} />
         </div>
         {portfolio.notes.length > 0 && (
-          <div className="mt-4 rounded-lg p-3 text-xs leading-relaxed" style={{ background: C.paper, color: C.ink2 }}>
+          <div className="mt-4 rounded-lg p-3 text-xs leading-relaxed border" style={{ background: C.paper, borderColor: C.rule, color: C.ink2 }}>
             {portfolio.notes.join(" · ")}
           </div>
         )}
@@ -1423,8 +1428,9 @@ function NetWorthTab({ data, profile, portfolio }) {
 }
 
 function GoalsTab({ data, profile }) {
+  const C = useTheme();
   const goals = (data.goals || []).map((g) => {
-    const monthsLeft = 24; // fallback
+    const monthsLeft = 24;
     const req = requiredMonthly(g.targetAmount, g.currentAmount, g.expectedAnnualReturnPct || 10, monthsLeft);
     return {
       ...g,
@@ -1443,7 +1449,7 @@ function GoalsTab({ data, profile }) {
         ) : (
           <div className="space-y-4">
             {goals.map((g) => (
-              <div key={g.id} className="rounded-lg border p-4" style={{ borderColor: C.rule }}>
+              <div key={g.id} className="rounded-lg border p-4" style={{ borderColor: C.rule, background: C.paper }}>
                 <div className="flex items-center justify-between">
                   <span className="font-semibold text-sm" style={{ color: C.ink }}>{g.name}</span>
                   <span className="text-xs font-semibold" style={{ ...NUM, color: C.sure }}>
@@ -1468,6 +1474,7 @@ function GoalsTab({ data, profile }) {
 }
 
 function DebtVsInvestTab({ data, profile }) {
+  const C = useTheme();
   const activeDebts = (data.debts || []).filter((x) => x.outstanding > 0);
   const firstDebt = activeDebts[0];
 
@@ -1566,8 +1573,8 @@ function DebtVsInvestTab({ data, profile }) {
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={merged} margin={{ top: 5, right: 8, left: 0, bottom: 5 }}>
               <CartesianGrid stroke={C.rule} vertical={false} />
-              <XAxis dataKey="year" tick={chartAxis} axisLine={false} tickLine={false} tickFormatter={(v) => `${Math.round(v)}y`} />
-              <YAxis tick={chartAxis} axisLine={false} tickLine={false} tickFormatter={inrShort} width={54} />
+              <XAxis dataKey="year" tick={{ fontSize: 11, fill: C.faint }} axisLine={false} tickLine={false} tickFormatter={(v) => `${Math.round(v)}y`} />
+              <YAxis tick={{ fontSize: 11, fill: C.faint }} axisLine={false} tickLine={false} tickFormatter={inrShort} width={54} />
               <Tooltip content={<ChartTip />} labelFormatter={(v) => `Year ${Number(v).toFixed(1)}`} />
               <ReferenceLine y={0} stroke={C.faint} />
               <Line type="monotone" dataKey="Repay" stroke={C.sure} strokeWidth={2} dot={false} />
@@ -1582,6 +1589,7 @@ function DebtVsInvestTab({ data, profile }) {
 }
 
 function GrowTab({ data, profile }) {
+  const C = useTheme();
   const [initial, setInitial] = useState(profile.totalInvestments);
   const [monthly, setMonthly] = useState(Math.max(1000, profile.sip));
   const [rate, setRate] = useState(12);
@@ -1620,6 +1628,7 @@ function GrowTab({ data, profile }) {
 }
 
 function SimulateTab({ data, profile }) {
+  const C = useTheme();
   const [levers, setLevers] = useState({
     salaryChangePct: 0,
     expenseChangePct: 0,
@@ -1655,9 +1664,10 @@ function SimulateTab({ data, profile }) {
 }
 
 function AffordTab({ data, profile }) {
+  const C = useTheme();
   const [itemName, setItemName] = useState("New iPhone / Gadget");
   const [price, setPrice] = useState(80000);
-  const [method, setMethod] = useState("cash"); // cash or emi
+  const [method, setMethod] = useState("cash");
   const [downPayment, setDownPayment] = useState(10000);
   const [emiMonths, setEmiMonths] = useState(12);
 
@@ -1700,7 +1710,7 @@ function AffordTab({ data, profile }) {
           )}
         </div>
 
-        <div className="mt-6 rounded-lg p-4" style={{ background: verdict === "affordable" ? C.sureBg : verdict === "stretch" ? C.warnBg : C.dangerBg }}>
+        <div className="mt-6 rounded-lg p-4 border" style={{ background: verdict === "affordable" ? C.sureBg : verdict === "stretch" ? C.warnBg : C.dangerBg, borderColor: C.rule }}>
           <div className="font-semibold text-base" style={{ color: verdict === "affordable" ? C.sure : verdict === "stretch" ? C.warn : C.danger }}>
             {verdict === "affordable" ? `Yes — ${itemName} fits comfortably!`
               : verdict === "stretch" ? `Stretch purchase — proceed with caution.`
@@ -1721,6 +1731,8 @@ function AffordTab({ data, profile }) {
 /* ================================================================== */
 
 function InputsPanel({ data, setData, onClose }) {
+  const C = useTheme();
+
   const set = (path, value) =>
     setData((d) => {
       const next = structuredClone(d);
@@ -1833,14 +1845,14 @@ function InputsPanel({ data, setData, onClose }) {
           <div className="flex gap-2">
             <button
               onClick={() => setData(BLANK_TEMPLATE)}
-              className="rounded-lg px-3 py-1.5 text-xs font-medium border transition-colors hover:bg-gray-100"
+              className="rounded-lg px-3 py-1.5 text-xs font-medium border transition-colors"
               style={{ borderColor: C.rule, color: C.ink2, background: C.card }}
             >
               🔄 Start Fresh / Reset
             </button>
             <button
               onClick={() => setData(DEMO)}
-              className="rounded-lg px-3 py-1.5 text-xs font-medium border transition-colors hover:bg-gray-100"
+              className="rounded-lg px-3 py-1.5 text-xs font-medium border transition-colors"
               style={{ borderColor: C.rule, color: C.ink2, background: C.card }}
             >
               📋 Load Sample Demo Data
@@ -1997,7 +2009,7 @@ function InputsPanel({ data, setData, onClose }) {
                   className="rounded-xl border p-4 transition-all"
                   style={{
                     borderColor: isToxic ? C.danger : C.rule,
-                    background: isToxic ? C.dangerBg + "22" : C.paper,
+                    background: isToxic ? C.dangerBg + "33" : C.paper,
                   }}
                 >
                   <div className="mb-3 flex items-center justify-between gap-3">
@@ -2016,7 +2028,7 @@ function InputsPanel({ data, setData, onClose }) {
                     </div>
                     <button
                       onClick={() => removeDebt(x.id)}
-                      className="rounded px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50"
+                      className="rounded px-2 py-1 text-xs font-medium text-red-500 hover:bg-red-900/20"
                     >
                       🗑️ Delete Debt
                     </button>
@@ -2107,7 +2119,7 @@ function InputsPanel({ data, setData, onClose }) {
                   <span className="font-semibold text-sm" style={{ color: C.ink }}>#{idx + 1} {x.name}</span>
                   <button
                     onClick={() => removeInvestment(x.id)}
-                    className="rounded px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50"
+                    className="rounded px-2 py-1 text-xs font-medium text-red-500 hover:bg-red-900/20"
                   >
                     🗑️ Remove
                   </button>
@@ -2154,7 +2166,7 @@ function InputsPanel({ data, setData, onClose }) {
                   <span className="font-semibold text-sm" style={{ color: C.ink }}>#{idx + 1} {x.name}</span>
                   <button
                     onClick={() => removeGoal(x.id)}
-                    className="rounded px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50"
+                    className="rounded px-2 py-1 text-xs font-medium text-red-500 hover:bg-red-900/20"
                   >
                     🗑️ Remove Goal
                   </button>
@@ -2174,12 +2186,65 @@ function InputsPanel({ data, setData, onClose }) {
       <button
         onClick={onClose}
         className="w-full rounded-xl px-4 py-3.5 text-base font-semibold shadow-md transition-opacity hover:opacity-90"
-        style={{ background: C.ink, color: "#fff" }}
+        style={{ background: C.ink, color: C.paper }}
       >
         Save & See What Changed
       </button>
     </div>
   );
+}
+
+/* ================================================================== */
+/* ERROR BOUNDARY                                                     */
+/* ================================================================== */
+
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error, errorInfo) {
+    console.error("FinCompass Uncaught Error:", error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div style={{ padding: "40px 20px", textAlign: "center", fontFamily: FONT, background: "#0B1320", minHeight: "100vh", color: "#F1F5F9" }}>
+          <div style={{ maxWidth: "500px", margin: "0 auto", background: "#162234", padding: "32px", borderRadius: "16px", border: "1px solid #26354A", boxShadow: "0 10px 25px rgba(0,0,0,0.3)" }}>
+            <div style={{ fontSize: "36px", marginBottom: "12px" }}>⚠️</div>
+            <h2 style={{ color: "#F87171", fontSize: "20px", fontWeight: "600" }}>FinCompass Recovered From An Error</h2>
+            <p style={{ color: "#94A3B8", fontSize: "14px", marginTop: "10px", lineHeight: "1.5" }}>
+              {this.state.error?.toString() || "An unexpected error occurred."}
+            </p>
+            <div style={{ display: "flex", gap: "10px", justifyContent: "center", marginTop: "24px" }}>
+              <button
+                onClick={() => window.location.reload()}
+                style={{ background: "#26354A", color: "#fff", border: "none", padding: "10px 18px", borderRadius: "8px", fontWeight: "500", cursor: "pointer", fontSize: "13px" }}
+              >
+                Reload Page
+              </button>
+              <button
+                onClick={() => {
+                  localStorage.removeItem("fincompass_user_data_v2");
+                  window.location.reload();
+                }}
+                style={{ background: "#F87171", color: "#fff", border: "none", padding: "10px 18px", borderRadius: "8px", fontWeight: "500", cursor: "pointer", fontSize: "13px" }}
+              >
+                Reset App Data
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
 }
 
 /* ================================================================== */
@@ -2199,7 +2264,15 @@ const TABS = [
   { id: "inputs", label: "Your numbers & Profile" },
 ];
 
-export default function FinCompass() {
+function FinCompassApp() {
+  const [isDark, setIsDark] = useState(() => {
+    try {
+      return localStorage.getItem("fincompass_dark_mode") === "true";
+    } catch (e) {
+      return false;
+    }
+  });
+
   const [data, setData] = useState(() => {
     try {
       const saved = localStorage.getItem("fincompass_user_data_v2");
@@ -2223,12 +2296,19 @@ export default function FinCompass() {
 
   useEffect(() => {
     try {
+      localStorage.setItem("fincompass_dark_mode", isDark ? "true" : "false");
+    } catch (e) {}
+  }, [isDark]);
+
+  useEffect(() => {
+    try {
       localStorage.setItem("fincompass_user_data_v2", JSON.stringify(data));
     } catch (e) {
       console.error("Failed to save state:", e);
     }
   }, [data]);
 
+  const C = useMemo(() => (isDark ? DARK_THEME : LIGHT_THEME), [isDark]);
   const profile = useMemo(() => deriveProfile(data), [data]);
   const health = useMemo(() => healthScore(data, profile), [data, profile]);
   const recs = useMemo(() => recommend(data, profile, health), [data, profile, health]);
@@ -2243,105 +2323,123 @@ export default function FinCompass() {
     health.total >= 70 ? C.sure : health.total >= 55 ? C.ink2 : health.total >= 35 ? C.warn : C.danger;
 
   return (
-    <div style={{ background: C.paper, minHeight: "100%", fontFamily: FONT, color: C.ink }}>
-      <header
-        className="sticky top-0 z-10"
-        style={{ background: "rgba(238,242,247,0.92)", backdropFilter: "blur(8px)", borderBottom: `1px solid ${C.rule}` }}
-      >
-        <div className="mx-auto flex max-w-6xl items-center gap-4 px-4 py-3 sm:px-6">
-          <div className="flex items-center gap-3">
-            <div
-              className="flex h-9 w-9 items-center justify-center rounded-full font-bold text-white shadow-sm"
-              style={{ background: C.ink }}
-            >
-              {(data.personal?.name || "U")[0].toUpperCase()}
-            </div>
-            <div>
-              <div className="flex items-baseline gap-2">
-                <span className="text-base font-semibold" style={{ letterSpacing: "-0.02em" }}>
-                  FinCompass
-                </span>
-                <span className="text-xs font-medium rounded px-1.5 py-0.5" style={{ background: C.card, color: C.ink2, border: `1px solid ${C.rule}` }}>
-                  {data.personal?.name || "User"}
-                </span>
+    <ThemeContext.Provider value={C}>
+      <div style={{ background: C.paper, minHeight: "100vh", fontFamily: FONT, color: C.ink }}>
+        <header
+          className="sticky top-0 z-10 transition-colors"
+          style={{ background: isDark ? "rgba(11,19,32,0.92)" : "rgba(238,242,247,0.92)", backdropFilter: "blur(8px)", borderBottom: `1px solid ${C.rule}` }}
+        >
+          <div className="mx-auto flex max-w-6xl items-center gap-4 px-4 py-3 sm:px-6">
+            <div className="flex items-center gap-3">
+              <div
+                className="flex h-9 w-9 items-center justify-center rounded-full font-bold text-white shadow-sm"
+                style={{ background: C.sure }}
+              >
+                {(data.personal?.name || "U")[0].toUpperCase()}
               </div>
-              <div className="text-xs" style={{ color: C.muted }}>
-                {data.personal?.city || "India"} · age {data.personal?.age} · {data.personal?.email || "No email"}
+              <div>
+                <div className="flex items-baseline gap-2">
+                  <span className="text-base font-semibold" style={{ letterSpacing: "-0.02em", color: C.ink }}>
+                    FinCompass
+                  </span>
+                  <span className="text-xs font-medium rounded px-1.5 py-0.5" style={{ background: C.card, color: C.ink2, border: `1px solid ${C.rule}` }}>
+                    {data.personal?.name || "User"}
+                  </span>
+                </div>
+                <div className="text-xs" style={{ color: C.muted }}>
+                  {data.personal?.city || "India"} · age {data.personal?.age} · {data.personal?.email || "No email"}
+                </div>
+              </div>
+            </div>
+
+            <div className="ml-auto flex items-center gap-2 sm:gap-3">
+              <button
+                onClick={() => setIsDark((prev) => !prev)}
+                className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium border transition-colors"
+                style={{ borderColor: C.rule, color: C.ink, background: C.card }}
+                title="Toggle Light/Dark Theme"
+              >
+                {isDark ? "☀️ Light" : "🌙 Dark"}
+              </button>
+              <button
+                onClick={() => setTab("inputs")}
+                className="hidden sm:inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium border transition-colors"
+                style={{ borderColor: C.rule, color: C.ink2, background: C.card }}
+              >
+                ✏️ Profile & Numbers
+              </button>
+              <div className="text-right">
+                <div className="text-xs" style={{ color: C.faint }}>Financial health</div>
+                <div className="text-sm font-semibold" style={{ ...NUM, color: bandColor }}>
+                  {health.total}/100
+                </div>
               </div>
             </div>
           </div>
 
-          <div className="ml-auto flex items-center gap-3">
-            <button
-              onClick={() => setTab("inputs")}
-              className="hidden sm:inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium border transition-colors hover:bg-gray-100"
-              style={{ borderColor: C.rule, color: C.ink2, background: C.card }}
-            >
-              ✏️ Edit Profile & Numbers
-            </button>
-            <div className="text-right">
-              <div className="text-xs" style={{ color: C.faint }}>Financial health</div>
-              <div className="text-sm font-semibold" style={{ ...NUM, color: bandColor }}>
-                {health.total}/100
-              </div>
+          <nav className="mx-auto max-w-6xl overflow-x-auto px-4 sm:px-6">
+            <div className="flex gap-1 pb-2">
+              {TABS.map((t) => {
+                const active = t.id === tab;
+                return (
+                  <button
+                    key={t.id}
+                    onClick={() => setTab(t.id)}
+                    className="whitespace-nowrap rounded-lg px-3 py-1.5 text-sm font-medium transition-colors"
+                    style={{
+                      background: active ? C.ink : "transparent",
+                      color: active ? C.paper : C.muted,
+                    }}
+                  >
+                    {t.label}
+                  </button>
+                );
+              })}
             </div>
-          </div>
-        </div>
+          </nav>
+        </header>
 
-        <nav className="mx-auto max-w-6xl overflow-x-auto px-4 sm:px-6">
-          <div className="flex gap-1 pb-2">
-            {TABS.map((t) => {
-              const active = t.id === tab;
-              return (
-                <button
-                  key={t.id}
-                  onClick={() => setTab(t.id)}
-                  className="whitespace-nowrap rounded-lg px-3 py-1.5 text-sm font-medium transition-colors"
-                  style={{
-                    background: active ? C.ink : "transparent",
-                    color: active ? "#fff" : C.muted,
-                  }}
-                >
-                  {t.label}
-                </button>
-              );
-            })}
-          </div>
-        </nav>
-      </header>
+        <main className="mx-auto max-w-6xl px-4 py-6 sm:px-6 sm:py-8">
+          {tab === "decide" && (
+            <DecideTab
+              data={data} profile={profile} health={health}
+              recs={recs} alerts={alerts} allocation={allocation}
+            />
+          )}
+          {tab === "plan" && (
+            <PlanTab data={data} profile={profile} allocation={allocation} alerts={alerts} />
+          )}
+          {tab === "health" && <HealthTab health={health} profile={profile} />}
+          {tab === "networth" && <NetWorthTab data={data} profile={profile} portfolio={portfolio} />}
+          {tab === "goals" && <GoalsTab data={data} profile={profile} />}
+          {tab === "debt" && <DebtVsInvestTab data={data} profile={profile} />}
+          {tab === "grow" && <GrowTab data={data} profile={profile} />}
+          {tab === "simulate" && <SimulateTab data={data} profile={profile} />}
+          {tab === "afford" && <AffordTab data={data} profile={profile} />}
+          {tab === "inputs" && (
+            <InputsPanel data={data} setData={setData} onClose={() => setTab("decide")} />
+          )}
 
-      <main className="mx-auto max-w-6xl px-4 py-6 sm:px-6 sm:py-8">
-        {tab === "decide" && (
-          <DecideTab
-            data={data} profile={profile} health={health}
-            recs={recs} alerts={alerts} allocation={allocation}
-          />
-        )}
-        {tab === "plan" && (
-          <PlanTab data={data} profile={profile} allocation={allocation} alerts={alerts} />
-        )}
-        {tab === "health" && <HealthTab health={health} profile={profile} />}
-        {tab === "networth" && <NetWorthTab data={data} profile={profile} portfolio={portfolio} />}
-        {tab === "goals" && <GoalsTab data={data} profile={profile} />}
-        {tab === "debt" && <DebtVsInvestTab data={data} profile={profile} />}
-        {tab === "grow" && <GrowTab data={data} profile={profile} />}
-        {tab === "simulate" && <SimulateTab data={data} profile={profile} />}
-        {tab === "afford" && <AffordTab data={data} profile={profile} />}
-        {tab === "inputs" && (
-          <InputsPanel data={data} setData={setData} onClose={() => setTab("decide")} />
-        )}
+          <footer className="mt-10 border-t pt-6" style={{ borderColor: C.rule }}>
+            <p className="text-xs leading-relaxed" style={{ color: C.faint }}>
+              FinCompass is a planning and decision-support tool, not a registered investment adviser.
+              Projections use the assumptions shown alongside each figure and are illustrative only —
+              investment returns are uncertain and can be negative, while debt interest is contractual.
+            </p>
+            <p className="mt-3 text-xs" style={{ color: C.faint }}>
+              Showing profile for <strong>{data.personal?.name}</strong> ({data.personal?.city}). Open “Your numbers & Profile” to edit any input or add multiple loans/credit cards.
+            </p>
+          </footer>
+        </main>
+      </div>
+    </ThemeContext.Provider>
+  );
+}
 
-        <footer className="mt-10 border-t pt-6" style={{ borderColor: C.rule }}>
-          <p className="text-xs leading-relaxed" style={{ color: C.faint }}>
-            FinCompass is a planning and decision-support tool, not a registered investment adviser.
-            Projections use the assumptions shown alongside each figure and are illustrative only —
-            investment returns are uncertain and can be negative, while debt interest is contractual.
-          </p>
-          <p className="mt-3 text-xs" style={{ color: C.faint }}>
-            Showing profile for <strong>{data.personal?.name}</strong> ({data.personal?.city}). Open “Your numbers & Profile” to edit any input or add multiple loans/credit cards.
-          </p>
-        </footer>
-      </main>
-    </div>
+export default function FinCompass() {
+  return (
+    <ErrorBoundary>
+      <FinCompassApp />
+    </ErrorBoundary>
   );
 }
