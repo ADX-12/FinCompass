@@ -581,6 +581,8 @@ function allocate(d, p, amount, mode = "monthly") {
   };
 }
 
+const SEVERITY = { critical: 1000, high: 100, medium: 10, low: 1 };
+
 function recommend(d, p, health) {
   const out = [];
   const debts = d.debts || [];
