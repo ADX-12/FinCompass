@@ -1,4 +1,19 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import BanksTab from "./BanksTab";
+import DailyTrackerTab, { DEFAULT_CATEGORIES } from "./DailyTracker";
+import SpendingAnalysisTab from "./SpendingAnalysis";
+import BalanceSheetTab from "./BalanceSheet";
+import { ThemeContext } from "./FinCompassContext";
+import {
+  FIREBASE_CONFIGURED,
+  loadUserData,
+  saveUserData,
+  loadBanks,
+  saveBanks,
+  loadDailyLogs,
+  saveDailyLog,
+  deleteDailyEntry,
+} from "./firebase";
 import {
   Area,
   AreaChart,
@@ -59,7 +74,6 @@ const DARK_THEME = {
   warnBg: "#78350F", // Dark amber background
 };
 
-const ThemeContext = React.createContext(LIGHT_THEME);
 const useTheme = () => React.useContext(ThemeContext);
 
 const FONT =
@@ -218,6 +232,59 @@ function prepaymentImpact(balance, annualPct, emi, extra, penaltyPct = 0) {
 
 const effectiveDebtRate = (rate, deductible, taxRate) =>
   deductible ? rate * (1 - taxRate / 100) : rate;
+
+/* Scenario simulator — projects net worth over a horizon with modified
+   salary, expenses, extra debt payments and extra investments.          */
+function simulate(d, p, levers) {
+  const {
+    salaryChangePct = 0,
+    expenseChangePct = 0,
+    extraInvestment = 0,
+    extraDebtPayment = 0,
+    horizonYears = 10,
+  } = levers;
+
+  const months = Math.max(1, Math.round(horizonYears * 12));
+  const inflation = d.assumptions?.inflationPct || 6;
+  const investReturn = p.expectedReturn || 12;
+
+  // Adjusted monthly figures
+  const newIncome = p.income * (1 + salaryChangePct / 100);
+  const newLiving = p.living * (1 + expenseChangePct / 100);
+
+  const i = mRate(investReturn);
+  const r = loanRate(p.weightedDebtRate || 0);
+
+  let corpus = p.totalInvestments;
+  let debtBal = p.totalDebt;
+  const baseSip = p.sip + extraInvestment;
+  const baseEmi = p.emi + extraDebtPayment;
+
+  for (let m = 0; m < months; m++) {
+    // Grow investments
+    corpus = corpus * (1 + i) + Math.max(0, baseSip);
+    // Pay down debt
+    if (debtBal > 0) {
+      const interest = debtBal * r;
+      const pay = Math.min(baseEmi, debtBal + interest);
+      debtBal = Math.max(0, debtBal + interest - pay);
+    }
+  }
+
+  const liquidGrown = (p.liquidSavings || 0) * Math.pow(1 + (d.assumptions?.savingsAccountReturnPct || 3.5) / 100, horizonYears);
+  const netWorth = corpus + liquidGrown - debtBal;
+  const netWorthReal = netWorth / Math.pow(1 + inflation / 100, horizonYears);
+
+  return {
+    netWorth: Math.round(netWorth),
+    netWorthReal: Math.round(netWorthReal),
+    debtRemaining: Math.round(debtBal),
+    finalCorpus: Math.round(corpus),
+    newIncome: Math.round(newIncome),
+    newLiving: Math.round(newLiving),
+    newSurplus: Math.round(newIncome - newLiving - baseEmi - baseSip),
+  };
+}
 
 /* ---------------------------------------------------------------- */
 /* Domain constants & Kinds                                          */
@@ -1102,14 +1169,65 @@ function SelectField({ label, value, onChange, options = [] }) {
 
 function NumberField({ label, value, onChange, min = 0, max, step = 500, prefix = "₹", hint }) {
   const C = useTheme();
+  // Local text state so user can type freely without being snapped by the slider
+  const [textVal, setTextVal] = React.useState("");
+  const [editing, setEditing] = React.useState(false);
+
+  const displayText = editing ? textVal : (prefix === "₹" ? String(Math.round(value || 0)) : String(value || 0));
+
+  const handleTextChange = (e) => {
+    setTextVal(e.target.value);
+  };
+
+  const handleTextBlur = () => {
+    const parsed = Number(String(textVal).replace(/[^0-9.-]/g, ""));
+    if (!isNaN(parsed)) {
+      const clamped = max !== undefined ? Math.min(max, Math.max(min, parsed)) : Math.max(min, parsed);
+      onChange(clamped);
+    }
+    setEditing(false);
+  };
+
+  const handleTextFocus = () => {
+    setTextVal(String(Math.round(value || 0)));
+    setEditing(true);
+  };
+
+  const handleKeyDown = (e) => {
+    if (e.key === "Enter") e.target.blur();
+  };
+
   return (
     <label className="block">
       <div className="flex items-baseline justify-between gap-2">
         <span className="text-xs font-medium" style={{ color: C.muted }}>{label}</span>
-        <span className="text-sm font-semibold" style={{ ...NUM, color: C.ink }}>
-          {prefix === "₹" ? inr(value) : `${value}${prefix}`}
-        </span>
+        {/* Editable number text box */}
+        <div className="flex items-center gap-1">
+          {prefix === "₹" && (
+            <span className="text-xs font-medium" style={{ color: C.faint }}>₹</span>
+          )}
+          <input
+            type="text"
+            inputMode="numeric"
+            value={displayText}
+            onChange={handleTextChange}
+            onFocus={handleTextFocus}
+            onBlur={handleTextBlur}
+            onKeyDown={handleKeyDown}
+            className="w-24 rounded-md border px-2 py-0.5 text-sm font-semibold text-right focus:outline-none focus:ring-1"
+            style={{
+              borderColor: C.rule,
+              color: C.ink,
+              background: C.paper,
+              fontVariantNumeric: "tabular-nums",
+            }}
+          />
+          {prefix !== "₹" && (
+            <span className="text-xs font-medium" style={{ color: C.faint }}>{prefix}</span>
+          )}
+        </div>
       </div>
+      {/* Slider */}
       <input
         type="range"
         min={min}
@@ -1637,31 +1755,154 @@ function SimulateTab({ data, profile }) {
     horizonYears: 10,
   });
 
+  const set = (key) => (v) => setLevers((prev) => ({ ...prev, [key]: v }));
+
   const sim = useMemo(() => simulate(data, profile, levers), [data, profile, levers]);
+
+  // Build year-by-year chart data: baseline vs scenario
+  const chartData = useMemo(() => {
+    const rows = [];
+    const inflation = data.assumptions?.inflationPct || 6;
+    const investReturn = profile.expectedReturn || 12;
+    const i = mRate(investReturn);
+    const r = loanRate(profile.weightedDebtRate || 0);
+    const savRate = (data.assumptions?.savingsAccountReturnPct || 3.5) / 100;
+
+    // Baseline (no change)
+    let baseCorpus = profile.totalInvestments;
+    let baseDebt = profile.totalDebt;
+    let baseCorpusS = profile.totalInvestments;
+    let baseDebtS = profile.totalDebt;
+    const baseEmi = profile.emi;
+    const simEmi = profile.emi + levers.extraDebtPayment;
+    const baseSip = profile.sip;
+    const simSip = profile.sip + levers.extraInvestment;
+
+    for (let yr = 1; yr <= levers.horizonYears; yr++) {
+      // Baseline: 12 months
+      for (let m = 0; m < 12; m++) {
+        baseCorpus = baseCorpus * (1 + i) + baseSip;
+        if (baseDebt > 0) {
+          const int = baseDebt * r;
+          baseDebt = Math.max(0, baseDebt + int - Math.min(baseEmi, baseDebt + int));
+        }
+      }
+      // Scenario: 12 months
+      for (let m = 0; m < 12; m++) {
+        baseCorpusS = baseCorpusS * (1 + i) + simSip;
+        if (baseDebtS > 0) {
+          const int = baseDebtS * r;
+          baseDebtS = Math.max(0, baseDebtS + int - Math.min(simEmi, baseDebtS + int));
+        }
+      }
+      const liq = (profile.liquidSavings || 0) * Math.pow(1 + savRate, yr);
+      const baseNW = baseCorpus + liq - baseDebt;
+      const scenNW = baseCorpusS + liq - baseDebtS;
+      rows.push({
+        year: `Yr ${yr}`,
+        Baseline: Math.round(baseNW),
+        Scenario: Math.round(scenNW),
+        diff: Math.round(scenNW - baseNW),
+      });
+    }
+    return rows;
+  }, [data, profile, levers]);
+
+  const lastRow = chartData[chartData.length - 1] || { Baseline: 0, Scenario: 0, diff: 0 };
+  const isPositive = lastRow.diff >= 0;
 
   return (
     <div className="space-y-6">
+      {/* Levers card */}
       <Card>
-        <SectionTitle sub="Simulate changes in your income, expenses, or extra debt prepayments">
-          Scenario Simulator
+        <SectionTitle sub="Adjust levers to see how each decision changes your projected net worth">
+          🎛️ Scenario Simulator — What If?
         </SectionTitle>
         <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
-          <NumberField label="Salary change" value={levers.salaryChangePct} onChange={(v) => setLevers({ ...levers, salaryChangePct: v })} min={-50} max={100} step={5} prefix="%" />
-          <NumberField label="Expense change" value={levers.expenseChangePct} onChange={(v) => setLevers({ ...levers, expenseChangePct: v })} min={-50} max={100} step={5} prefix="%" />
-          <NumberField label="Extra monthly debt payment" value={levers.extraDebtPayment} onChange={(v) => setLevers({ ...levers, extraDebtPayment: v })} min={0} max={100000} step={1000} />
-          <NumberField label="Extra monthly investment" value={levers.extraInvestment} onChange={(v) => setLevers({ ...levers, extraInvestment: v })} min={0} max={100000} step={1000} />
-          <NumberField label="Time horizon" value={levers.horizonYears} onChange={(v) => setLevers({ ...levers, horizonYears: v })} min={1} max={30} step={1} prefix=" years" />
+          <NumberField label="Salary change" value={levers.salaryChangePct} onChange={set("salaryChangePct")} min={-50} max={100} step={5} prefix="%" />
+          <NumberField label="Expense change" value={levers.expenseChangePct} onChange={set("expenseChangePct")} min={-50} max={100} step={5} prefix="%" />
+          <NumberField label="Extra monthly debt payment" value={levers.extraDebtPayment} onChange={set("extraDebtPayment")} min={0} max={100000} step={1000} />
+          <NumberField label="Extra monthly investment" value={levers.extraInvestment} onChange={set("extraInvestment")} min={0} max={100000} step={1000} />
+          <NumberField label="Time horizon" value={levers.horizonYears} onChange={set("horizonYears")} min={1} max={30} step={1} prefix=" years" />
         </div>
+      </Card>
 
-        <div className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-3">
-          <Stat label="Projected Net Worth" value={inrShort(sim.netWorth)} tone={C.sure} />
-          <Stat label="Real Value" value={inrShort(sim.netWorthReal)} tone={C.model} />
-          <Stat label="Debt Remaining" value={inrShort(sim.debtRemaining)} tone={sim.debtRemaining > 0 ? C.danger : C.sure} />
+      {/* Comparison cards */}
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="rounded-xl p-4 border" style={{ background: C.card, borderColor: C.rule }}>
+          <div className="text-xs font-medium" style={{ color: C.muted }}>Baseline Net Worth</div>
+          <div className="text-xl font-bold mt-1" style={{ ...NUM, color: C.ink }}>{inrShort(lastRow.Baseline)}</div>
+          <div className="text-xs mt-0.5" style={{ color: C.faint }}>without any changes</div>
+        </div>
+        <div className="rounded-xl p-4 border" style={{ background: isPositive ? C.sureBg : C.dangerBg, borderColor: isPositive ? C.sure : C.danger }}>
+          <div className="text-xs font-medium" style={{ color: C.muted }}>Scenario Net Worth</div>
+          <div className="text-xl font-bold mt-1" style={{ ...NUM, color: isPositive ? C.sure : C.danger }}>{inrShort(lastRow.Scenario)}</div>
+          <div className="text-xs mt-0.5 font-semibold" style={{ color: isPositive ? C.sure : C.danger }}>
+            {isPositive ? "+" : ""}{inrShort(lastRow.diff)} vs baseline
+          </div>
+        </div>
+        <div className="rounded-xl p-4 border" style={{ background: C.card, borderColor: C.rule }}>
+          <div className="text-xs font-medium" style={{ color: C.muted }}>Real Value (Inflation Adj)</div>
+          <div className="text-xl font-bold mt-1" style={{ ...NUM, color: C.model }}>{inrShort(sim.netWorthReal)}</div>
+          <div className="text-xs mt-0.5" style={{ color: C.faint }}>in today's purchasing power</div>
+        </div>
+        <div className="rounded-xl p-4 border" style={{ background: C.card, borderColor: C.rule }}>
+          <div className="text-xs font-medium" style={{ color: C.muted }}>Debt Remaining</div>
+          <div className="text-xl font-bold mt-1" style={{ ...NUM, color: sim.debtRemaining > 0 ? C.danger : C.sure }}>
+            {sim.debtRemaining > 0 ? inrShort(sim.debtRemaining) : "Debt Free! 🎉"}
+          </div>
+          <div className="text-xs mt-0.5" style={{ color: C.faint }}>after {levers.horizonYears} years</div>
+        </div>
+      </div>
+
+      {/* Monthly cash flow comparison */}
+      <div className="grid gap-4 sm:grid-cols-3">
+        {[
+          { label: "New Monthly Income", value: inr(sim.newIncome), hint: `was ${inr(profile.income)}`, tone: C.sure },
+          { label: "New Monthly Expenses", value: inr(sim.newLiving), hint: `was ${inr(profile.living)}`, tone: C.ink },
+          { label: "New Monthly Surplus", value: inr(sim.newSurplus), hint: `was ${inr(profile.surplus)}`, tone: sim.newSurplus >= 0 ? C.model : C.danger },
+        ].map((s) => (
+          <div key={s.label} className="rounded-xl p-4 border" style={{ background: C.card, borderColor: C.rule }}>
+            <div className="text-xs font-medium" style={{ color: C.muted }}>{s.label}</div>
+            <div className="text-xl font-bold mt-1" style={{ ...NUM, color: s.tone }}>{s.value}</div>
+            <div className="text-xs mt-0.5" style={{ color: C.faint }}>{s.hint}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Net worth trajectory chart */}
+      <Card>
+        <SectionTitle sub={`Baseline vs your scenario over ${levers.horizonYears} years`}>
+          📈 Net Worth Trajectory
+        </SectionTitle>
+        <div className="h-72">
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={chartData} margin={{ top: 5, right: 8, left: 0, bottom: 5 }}>
+              <CartesianGrid stroke={C.rule} vertical={false} />
+              <XAxis dataKey="year" tick={{ fontSize: 11, fill: C.faint }} axisLine={false} tickLine={false} />
+              <YAxis tick={{ fontSize: 11, fill: C.faint }} axisLine={false} tickLine={false} tickFormatter={inrShort} width={56} />
+              <Tooltip content={<ChartTip />} />
+              <ReferenceLine y={0} stroke={C.faint} strokeDasharray="3 3" />
+              <Line type="monotone" dataKey="Baseline" stroke={C.faint} strokeWidth={2} strokeDasharray="5 3" dot={false} name="Baseline" />
+              <Line type="monotone" dataKey="Scenario" stroke={isPositive ? C.sure : C.danger} strokeWidth={2.5} dot={false} name="Scenario" />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+        <div className="mt-3 flex gap-4 text-xs" style={{ color: C.muted }}>
+          <span className="flex items-center gap-1.5">
+            <span className="inline-block h-0.5 w-5" style={{ background: C.faint, borderTop: `2px dashed ${C.faint}` }} />
+            Baseline (no changes)
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="inline-block h-0.5 w-5" style={{ background: isPositive ? C.sure : C.danger }} />
+            Your scenario
+          </span>
         </div>
       </Card>
     </div>
   );
 }
+
 
 function AffordTab({ data, profile }) {
   const C = useTheme();
@@ -2254,6 +2495,10 @@ class ErrorBoundary extends React.Component {
 const TABS = [
   { id: "decide", label: "Decide" },
   { id: "plan", label: "This month" },
+  { id: "daily", label: "Transactions" },
+  { id: "analysis", label: "Analysis" },
+  { id: "report", label: "📋 Report" },
+  { id: "banks", label: "Banks & Cash" },
   { id: "health", label: "Health" },
   { id: "networth", label: "Net worth" },
   { id: "goals", label: "Goals" },
@@ -2292,7 +2537,160 @@ function FinCompassApp() {
     return DEMO;
   });
 
+  // ── Banks & Cash state ──────────────────────────────────────────
+  const [banks, setBanksRaw] = useState(() => {
+    try {
+      const saved = localStorage.getItem("fincompass_banks_v1");
+      return saved ? JSON.parse(saved) : [];
+    } catch { return []; }
+  });
+  const [cash, setCashRaw] = useState(() => {
+    try {
+      const saved = localStorage.getItem("fincompass_cash_v1");
+      return saved ? Number(saved) : 0;
+    } catch { return 0; }
+  });
+
+  // ── Categories state ─────────────────────────────────────────
+  const [categories, setCategoriesRaw] = useState(() => {
+    try {
+      const saved = localStorage.getItem("fincompass_categories_v1");
+      return saved ? JSON.parse(saved) : DEFAULT_CATEGORIES;
+    } catch { return DEFAULT_CATEGORIES; }
+  });
+
+  const saveCategories = useCallback((cats) => {
+    try { localStorage.setItem("fincompass_categories_v1", JSON.stringify(cats)); } catch {}
+    // Optionally save to Firebase here
+  }, []);
+
+  const handleEditBudget = useCallback((catId, budget) => {
+    setCategoriesRaw((prev) => {
+      const next = prev.map((c) => c.id === catId ? { ...c, budget } : c);
+      saveCategories(next);
+      return next;
+    });
+  }, [saveCategories]);
+
+  const handleAddCategory = useCallback((cat) => {
+    setCategoriesRaw((prev) => {
+      const next = [...prev, cat];
+      saveCategories(next);
+      return next;
+    });
+  }, [saveCategories]);
+
+  const handleDeleteCategory = useCallback((catId) => {
+    setCategoriesRaw((prev) => {
+      const next = prev.filter((c) => c.id !== catId);
+      saveCategories(next);
+      return next;
+    });
+  }, [saveCategories]);
+
+  // ── Daily logs state ────────────────────────────────────────────
+  const [dailyLogs, setDailyLogsRaw] = useState(() => {
+    try {
+      const saved = localStorage.getItem("fincompass_daily_logs_v1");
+      return saved ? JSON.parse(saved) : {};
+    } catch { return {}; }
+  });
+
+  const [syncStatus, setSyncStatus] = useState("idle"); // idle | syncing | synced | offline
   const [tab, setTab] = useState("decide");
+  const saveTimerRef = useRef(null);
+
+  // ── Load from Firestore on mount ────────────────────────────────
+  useEffect(() => {
+    if (!FIREBASE_CONFIGURED) { setSyncStatus("offline"); return; }
+    setSyncStatus("syncing");
+    Promise.all([loadUserData(), loadBanks(), loadDailyLogs()])
+      .then(([userData, banksData, logsData]) => {
+        if (userData) {
+          setData((prev) => ({
+            ...DEMO,
+            ...userData,
+            personal: { ...DEMO.personal, ...userData.personal },
+            cashFlow: { ...DEMO.cashFlow, ...userData.cashFlow },
+            savings: { ...DEMO.savings, ...userData.savings },
+          }));
+        }
+        if (banksData) {
+          setBanksRaw(banksData.banks || []);
+          setCashRaw(banksData.cash || 0);
+        }
+        if (logsData) {
+          setDailyLogsRaw(logsData);
+        }
+        setSyncStatus("synced");
+      })
+      .catch((e) => {
+        console.warn("Firestore load error:", e);
+        setSyncStatus("offline");
+      });
+  }, []);
+
+
+
+  const setBanks = useCallback((updater) => {
+    setBanksRaw((prev) => {
+      const next = typeof updater === "function" ? updater(prev) : updater;
+      try { localStorage.setItem("fincompass_banks_v1", JSON.stringify(next)); } catch {}
+      saveBanks(next, cash).catch(() => {});
+      return next;
+    });
+  }, [cash]);
+
+  const setCash = useCallback((val) => {
+    setCashRaw(val);
+    try { localStorage.setItem("fincompass_cash_v1", String(val)); } catch {}
+    saveBanks(banks, val).catch(() => {});
+  }, [banks]);
+
+  // ── Auto-sync bank balances → savings.bankBalance and savings.cash ─
+  useEffect(() => {
+    const totalBank = banks.reduce((s, b) => s + (b.balance || 0), 0);
+    setData((prev) => ({
+      ...prev,
+      savings: {
+        ...(prev.savings || {}),
+        bankBalance: totalBank,
+        cash: cash,
+      },
+    }));
+  }, [banks, cash]);
+
+  // ── Daily log helpers ───────────────────────────────────────────
+  const handleAddEntry = useCallback((dateStr, entry) => {
+    setDailyLogsRaw((prev) => {
+      const dayLog = prev[dateStr] || { entries: [], totalSpent: 0 };
+      const newEntries = [...dayLog.entries, entry];
+      const newLog = { entries: newEntries, totalSpent: newEntries.reduce((s, e) => s + e.amount, 0) };
+      const next = { ...prev, [dateStr]: newLog };
+      try { localStorage.setItem("fincompass_daily_logs_v1", JSON.stringify(next)); } catch {}
+      saveDailyLog(dateStr, newLog).catch(() => {});
+      return next;
+    });
+  }, []);
+
+  const handleDeleteEntry = useCallback((dateStr, entryId) => {
+    setDailyLogsRaw((prev) => {
+      const dayLog = prev[dateStr] || { entries: [] };
+      const newEntries = dayLog.entries.filter((e) => e.id !== entryId);
+      const newLog = { entries: newEntries, totalSpent: newEntries.reduce((s, e) => s + e.amount, 0) };
+      const next = { ...prev, [dateStr]: newLog };
+      if (newEntries.length === 0) {
+        const { [dateStr]: _, ...rest } = next;
+        try { localStorage.setItem("fincompass_daily_logs_v1", JSON.stringify(rest)); } catch {}
+        deleteDailyEntry(dateStr, null).catch(() => {});
+        return rest;
+      }
+      try { localStorage.setItem("fincompass_daily_logs_v1", JSON.stringify(next)); } catch {}
+      deleteDailyEntry(dateStr, newLog).catch(() => {});
+      return next;
+    });
+  }, []);
+
 
   useEffect(() => {
     try {
@@ -2305,6 +2703,14 @@ function FinCompassApp() {
       localStorage.setItem("fincompass_user_data_v2", JSON.stringify(data));
     } catch (e) {
       console.error("Failed to save state:", e);
+    }
+    // Debounced Firestore save
+    if (FIREBASE_CONFIGURED) {
+      clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = setTimeout(() => {
+        setSyncStatus("syncing");
+        saveUserData(data).then(() => setSyncStatus("synced")).catch(() => setSyncStatus("offline"));
+      }, 800);
     }
   }, [data]);
 
@@ -2321,6 +2727,15 @@ function FinCompassApp() {
 
   const bandColor =
     health.total >= 70 ? C.sure : health.total >= 55 ? C.ink2 : health.total >= 35 ? C.warn : C.danger;
+
+  // Sync indicator label
+  const syncLabel = !FIREBASE_CONFIGURED
+    ? { text: "💾 Local only", color: C.faint }
+    : syncStatus === "syncing"
+    ? { text: "☁️ Saving…", color: C.warn }
+    : syncStatus === "synced"
+    ? { text: "☁️ Synced", color: C.sure }
+    : { text: "📵 Offline", color: C.faint };
 
   return (
     <ThemeContext.Provider value={C}>
@@ -2353,6 +2768,10 @@ function FinCompassApp() {
             </div>
 
             <div className="ml-auto flex items-center gap-2 sm:gap-3">
+              {/* Sync status badge */}
+              <span className="hidden sm:inline text-xs font-medium" style={{ color: syncLabel.color }}>
+                {syncLabel.text}
+              </span>
               <button
                 onClick={() => setIsDark((prev) => !prev)}
                 className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium border transition-colors"
@@ -2408,6 +2827,39 @@ function FinCompassApp() {
           )}
           {tab === "plan" && (
             <PlanTab data={data} profile={profile} allocation={allocation} alerts={alerts} />
+          )}
+          {tab === "daily" && (
+            <DailyTrackerTab
+              logs={dailyLogs}
+              onAddEntry={handleAddEntry}
+              onDeleteEntry={handleDeleteEntry}
+              categories={categories}
+            />
+          )}
+          {tab === "analysis" && (
+            <SpendingAnalysisTab
+              logs={dailyLogs}
+              categories={categories}
+              onEditBudget={handleEditBudget}
+              onAddCategory={handleAddCategory}
+              onDeleteCategory={handleDeleteCategory}
+            />
+          )}
+          {tab === "report" && (
+            <BalanceSheetTab
+              data={data}
+              profile={profile}
+              dailyLogs={dailyLogs}
+              categories={categories}
+            />
+          )}
+          {tab === "banks" && (
+            <BanksTab
+              banks={banks}
+              cash={cash}
+              setBanks={setBanks}
+              setCash={setCash}
+            />
           )}
           {tab === "health" && <HealthTab health={health} profile={profile} />}
           {tab === "networth" && <NetWorthTab data={data} profile={profile} portfolio={portfolio} />}
