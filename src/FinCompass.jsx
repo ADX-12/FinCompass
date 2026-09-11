@@ -2494,7 +2494,6 @@ class ErrorBoundary extends React.Component {
 
 const TABS = [
   { id: "decide", label: "Decide" },
-  { id: "plan", label: "This month" },
   { id: "daily", label: "Transactions" },
   { id: "analysis", label: "Analysis" },
   { id: "report", label: "📋 Report" },

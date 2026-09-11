@@ -502,18 +502,21 @@ export default function SpendingAnalysisTab({ logs, categories, onEditBudget, on
           {categories.map((cat) => (
             <div key={cat.id} className="relative group">
               <BudgetCard cat={cat} spent={thisMonthSpend[cat.id] || 0} onEditBudget={onEditBudget} C={C} />
-              {/* Delete button for custom categories */}
-              {cat.id.startsWith("cat_") && (
-                <button
-                  onClick={() => onDeleteCategory(cat.id)}
-                  className="absolute top-2 right-14 opacity-0 group-hover:opacity-100 transition-opacity text-xs px-1.5 py-1 rounded-lg"
-                  style={{ color: "#F87171", background: C.paper, border: `1px solid ${C.rule}` }}
-                  title="Delete category"
-                >
-                  🗑️
-                </button>
-              )}
+              {/* Delete button — visible on hover for all categories */}
+              <button
+                onClick={() => {
+                  if (window.confirm(`Delete "${cat.label}" category? This won't delete past transactions.`)) {
+                    onDeleteCategory(cat.id);
+                  }
+                }}
+                className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-all duration-150 text-xs w-7 h-7 flex items-center justify-center rounded-lg"
+                style={{ color: "#F87171", background: C.paper, border: `1px solid #F8717144` }}
+                title={`Delete ${cat.label}`}
+              >
+                🗑️
+              </button>
             </div>
+
           ))}
         </div>
 
