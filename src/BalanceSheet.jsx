@@ -275,7 +275,7 @@ function MonthlyReport({ data, profile, dailyLogs, categories, C }) {
             </>
           ) : (
             <div className="h-44 flex items-center justify-center" style={{ color: C.faint }}>
-              <div className="text-center"><div className="text-3xl mb-2">📭</div><p className="text-sm">No expense data. Fill in Your Numbers.</p></div>
+              <div className="text-center"><div className="text-3xl mb-2">📭</div><p className="text-sm">No expense data. Fill in Profile.</p></div>
             </div>
           )}
         </div>

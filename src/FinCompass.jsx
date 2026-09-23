@@ -3,8 +3,12 @@ import BanksTab from "./BanksTab";
 import DailyTrackerTab, { DEFAULT_CATEGORIES } from "./DailyTracker";
 import SpendingAnalysisTab from "./SpendingAnalysis";
 import BalanceSheetTab from "./BalanceSheet";
+import AuthPage from "./AuthPage";
 import { ThemeContext } from "./FinCompassContext";
 import {
+  auth,
+  onAuthStateChanged,
+  logout,
   FIREBASE_CONFIGURED,
   loadUserData,
   saveUserData,
@@ -1007,46 +1011,56 @@ const DEMO = {
 
 const BLANK_TEMPLATE = {
   personal: {
-    name: "Apurva Donde",
-    email: "apurva@example.com",
-    city: "Mumbai",
+    name: "",
+    email: "",
+    city: "",
     cityTier: 1,
-    age: 26,
+    age: 25,
     retirementAge: 60,
     dependents: 0,
     employmentType: "salaried_private",
     housingStatus: "rented",
-    expectedAnnualSalaryGrowthPct: 10,
+    expectedAnnualSalaryGrowthPct: 0,
     riskTolerance: "moderate",
-    lifeInsuranceCover: 5000000,
-    healthInsuranceCover: 1000000,
+    lifeInsuranceCover: 0,
+    healthInsuranceCover: 0,
   },
   cashFlow: {
-    monthlySalary: 85000, otherMonthlyIncome: 0,
+    monthlySalary: 0,
+    otherMonthlyIncome: 0,
     expenses: {
-      rent: 22000, utilities: 3500, food: 12000, transport: 4000,
-      insurancePremiums: 2000, subscriptions: 1500, entertainment: 4000, other: 3000,
+      rent: 0,
+      utilities: 0,
+      food: 0,
+      transport: 0,
+      insurancePremiums: 0,
+      subscriptions: 0,
+      entertainment: 0,
+      other: 0,
     },
   },
   savings: {
-    bankBalance: 75000, emergencyFund: 100000, fixedDeposits: 50000,
-    recurringDeposits: 0, cash: 10000, otherLiquid: 0,
+    bankBalance: 0,
+    emergencyFund: 0,
+    fixedDeposits: 0,
+    recurringDeposits: 0,
+    cash: 0,
+    otherLiquid: 0,
   },
-  investments: [
-    { id: "i_1", name: "Nifty 50 Index SIP", kind: "equity_mutual_fund", currentValue: 150000, monthlyContribution: 15000, expectedAnnualReturnPct: 12, lockInMonths: 0 },
-  ],
-  debts: [
-    { id: "d_1", name: "Credit Card Balance", kind: "credit_card", originalPrincipal: 35000, outstanding: 35000, annualInterestRatePct: 38, emi: 3500, remainingTenureMonths: 12, prepaymentPenaltyPct: 0, taxDeductible: false },
-  ],
+  investments: [],
+  debts: [],
   assets: [],
-  goals: [
-    { id: "g_1", name: "Emergency Buffer", kind: "emergency_fund", targetAmount: 300000, currentAmount: 175000, targetDate: monthsFromNow(12), monthlyContribution: 10000, expectedAnnualReturnPct: 6, priority: "must_have" },
-  ],
+  goals: [],
   assumptions: {
-    inflationPct: 6, equityReturnPct: 12, savingsAccountReturnPct: 3.5,
-    marginalTaxRatePct: 20, ltcgRatePct: 12.5, retirementAge: 60, safeWithdrawalRatePct: 3.5,
+    inflationPct: 6,
+    equityReturnPct: 12,
+    savingsAccountReturnPct: 3.5,
+    marginalTaxRatePct: 20,
+    ltcgRatePct: 12.5,
+    retirementAge: 60,
+    safeWithdrawalRatePct: 3.5,
   },
-  history: buildHistory(),
+  history: [],
 };
 
 /* ================================================================== */
@@ -1419,7 +1433,7 @@ function DecideTab({ data, profile, health, recs, alerts, allocation }) {
           <AllocationWaterfall allocation={allocation} />
         ) : (
           <p className="text-sm leading-relaxed" style={{ color: C.muted }}>
-            You currently have no uncommitted monthly surplus. Go to "Your numbers & Profile" to update your salary or reduce expenses.
+            You currently have no uncommitted monthly surplus. Go to "Profile" to update your salary or reduce expenses.
           </p>
         )}
       </Card>
@@ -1563,7 +1577,7 @@ function GoalsTab({ data, profile }) {
       <Card>
         <SectionTitle sub="Track your active financial targets">Financial Goals</SectionTitle>
         {goals.length === 0 ? (
-          <p className="text-sm" style={{ color: C.muted }}>No goals added yet. Go to "Your numbers & Profile" to add goals.</p>
+          <p className="text-sm" style={{ color: C.muted }}>No goals added yet. Go to "Profile" to add goals.</p>
         ) : (
           <div className="space-y-4">
             {goals.map((g) => (
@@ -1593,113 +1607,183 @@ function GoalsTab({ data, profile }) {
 
 function DebtVsInvestTab({ data, profile }) {
   const C = useTheme();
-  const activeDebts = (data.debts || []).filter((x) => x.outstanding > 0);
-  const firstDebt = activeDebts[0];
+  const debts = (data.debts || []).filter((x) => x.outstanding > 0);
+  const investments = data.investments || [];
 
-  const [selectedDebtId, setSelectedDebtId] = useState(firstDebt ? firstDebt.id : "");
-  const currentDebt = activeDebts.find((x) => x.id === selectedDebtId) || firstDebt;
+  const totalDebt = debts.reduce((s, d) => s + (d.outstanding || 0), 0);
+  const totalInvested = investments.reduce((s, i) => s + (i.currentValue || 0), 0);
+  const totalEmi = debts.reduce((s, d) => s + (d.emi || 0), 0);
+  const totalSip = investments.reduce((s, i) => s + (i.monthlyContribution || 0), 0);
+  const netPosition = totalInvested - totalDebt;
+  const isPositive = netPosition >= 0;
 
-  const [outstanding, setOutstanding] = useState(currentDebt ? currentDebt.outstanding : 200000);
-  const [ratePct, setRatePct] = useState(currentDebt ? currentDebt.annualInterestRatePct : 14);
-  const [emi, setEmi] = useState(currentDebt ? currentDebt.emi : 5000);
-  const [extra, setExtra] = useState(5000);
-  const [returnPct, setReturnPct] = useState(Math.round(profile.expectedReturn || 12));
-  const [splitPct, setSplitPct] = useState(60);
+  // Visual ratio for the bar
+  const total = totalInvested + totalDebt;
+  const investPct = total > 0 ? (totalInvested / total) * 100 : 50;
+  const debtPct = total > 0 ? (totalDebt / total) * 100 : 50;
 
-  useEffect(() => {
-    if (currentDebt) {
-      setOutstanding(currentDebt.outstanding);
-      setRatePct(currentDebt.annualInterestRatePct);
-      setEmi(currentDebt.emi);
-    }
-  }, [selectedDebtId]);
+  // Weighted rates
+  const avgDebtRate = totalDebt > 0
+    ? debts.reduce((s, d) => s + (d.annualInterestRatePct || 0) * (d.outstanding || 0), 0) / totalDebt
+    : 0;
+  const avgInvestReturn = totalInvested > 0
+    ? investments.reduce((s, i) => s + (i.expectedAnnualReturnPct || 0) * (i.currentValue || 0), 0) / totalInvested
+    : 0;
 
-  const result = useMemo(
-    () => compareDebtVsInvest({ outstanding, ratePct, emi, extra, returnPct, splitPct }),
-    [outstanding, ratePct, emi, extra, returnPct, splitPct]
-  );
-
-  const merged = result.options[0].timeline.map((row, i) => ({
-    year: row.year,
-    Repay: row.net,
-    Invest: result.options[1].timeline[i]?.net ?? 0,
-    Split: result.options[2].timeline[i]?.net ?? 0,
-  }));
-
-  const OPT_COLOR = { repay: C.sure, invest: C.model, split: C.warn };
+  // Simple verdict
+  const verdict = totalDebt === 0
+    ? { text: "You're debt-free! All your money is working for you. 🎉", tone: C.sure }
+    : totalInvested === 0
+    ? { text: "You have no investments yet. Focus on clearing high-cost debt first, then start investing.", tone: C.danger }
+    : avgDebtRate > avgInvestReturn
+    ? { text: `Your debt costs ${pct(avgDebtRate)} but investments earn ~${pct(avgInvestReturn)}. Prioritize paying off expensive debt first.`, tone: C.warn }
+    : isPositive
+    ? { text: `Great — your investments outweigh your debt. Keep investing while paying EMIs on time.`, tone: C.sure }
+    : { text: `Your debt exceeds investments by ${inr(Math.abs(netPosition))}. Stay consistent with EMIs and SIPs to close the gap.`, tone: C.warn };
 
   return (
     <div className="space-y-6">
+      {/* Hero: Investments vs Debt */}
       <Card>
-        <SectionTitle sub="Compare paying down debt vs investing extra money in market funds.">
-          Debt Prepayment vs. Market Investment Simulator
+        <SectionTitle sub="A simple snapshot of what you own vs what you owe">
+          💰 Investments vs 💳 Debt
         </SectionTitle>
 
-        {activeDebts.length > 0 && (
+        {/* Big numbers side by side */}
+        <div className="grid grid-cols-2 gap-4 mb-5">
+          <div className="rounded-xl p-5 text-center" style={{ background: `${C.sure}12`, border: `1.5px solid ${C.sure}33` }}>
+            <div className="text-xs font-medium" style={{ color: C.muted }}>Total Investments</div>
+            <div className="text-3xl font-black mt-2" style={{ ...NUM, color: C.sure }}>{inrShort(totalInvested)}</div>
+            <div className="text-xs mt-1" style={{ color: C.faint }}>{inr(totalInvested)}</div>
+          </div>
+          <div className="rounded-xl p-5 text-center" style={{ background: `${C.danger}12`, border: `1.5px solid ${C.danger}33` }}>
+            <div className="text-xs font-medium" style={{ color: C.muted }}>Total Debt</div>
+            <div className="text-3xl font-black mt-2" style={{ ...NUM, color: C.danger }}>{inrShort(totalDebt)}</div>
+            <div className="text-xs mt-1" style={{ color: C.faint }}>{inr(totalDebt)}</div>
+          </div>
+        </div>
+
+        {/* Visual bar */}
+        {total > 0 && (
           <div className="mb-4">
-            <SelectField
-              label="Select Debt to Analyze"
-              value={selectedDebtId}
-              onChange={setSelectedDebtId}
-              options={activeDebts.map((d) => ({
-                value: d.id,
-                label: `${d.name} — ${inr(d.outstanding)} @ ${d.annualInterestRatePct}% APR`,
-              }))}
-            />
+            <div className="flex h-5 w-full overflow-hidden rounded-full" style={{ background: C.rule }}>
+              <div className="h-full transition-all flex items-center justify-center text-xs font-bold text-white" style={{ width: `${investPct}%`, background: C.sure, minWidth: investPct > 8 ? "auto" : 0 }}>
+                {investPct > 12 && `${Math.round(investPct)}%`}
+              </div>
+              <div className="h-full transition-all flex items-center justify-center text-xs font-bold text-white" style={{ width: `${debtPct}%`, background: C.danger, minWidth: debtPct > 8 ? "auto" : 0 }}>
+                {debtPct > 12 && `${Math.round(debtPct)}%`}
+              </div>
+            </div>
+            <div className="flex justify-between mt-1.5 text-xs" style={{ color: C.faint }}>
+              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm inline-block" style={{ background: C.sure }} /> Investments</span>
+              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm inline-block" style={{ background: C.danger }} /> Debt</span>
+            </div>
           </div>
         )}
 
-        <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
-          <NumberField label="Outstanding balance" value={outstanding} onChange={setOutstanding} min={10000} max={5000000} step={10000} />
-          <NumberField label="Interest rate" value={ratePct} onChange={setRatePct} min={1} max={48} step={0.5} prefix="%" />
-          <NumberField label="Current EMI / Payment" value={emi} onChange={setEmi} min={500} max={200000} step={500} />
-          <NumberField label="Extra cash available" value={extra} onChange={setExtra} min={1000} max={200000} step={1000} />
-          <NumberField label="Assumed market return" value={returnPct} onChange={setReturnPct} min={1} max={25} step={0.5} prefix="%" />
-          <NumberField label="Split: % to loan" value={splitPct} onChange={setSplitPct} min={0} max={100} step={5} prefix="%" />
+        {/* Net position */}
+        <div className="rounded-xl p-4 text-center" style={{ background: isPositive ? `${C.sure}12` : `${C.danger}12`, border: `1.5px solid ${isPositive ? C.sure : C.danger}33` }}>
+          <div className="text-xs font-medium" style={{ color: C.muted }}>Net Position (Investments − Debt)</div>
+          <div className="text-2xl font-black mt-1" style={{ ...NUM, color: isPositive ? C.sure : C.danger }}>
+            {isPositive ? "+" : ""}{inr(netPosition)}
+          </div>
         </div>
       </Card>
 
-      <div className="grid gap-4 lg:grid-cols-3">
-        {result.options.map((o) => {
-          const winner = o.key === result.best.key;
-          return (
-            <Card
-              key={o.key}
-              style={winner ? { borderColor: OPT_COLOR[o.key], borderWidth: 2 } : undefined}
-            >
-              <div className="flex items-baseline justify-between">
-                <h3 className="text-sm font-semibold" style={{ color: C.ink }}>{o.label}</h3>
-                {winner && <span className="text-xs font-bold" style={{ color: OPT_COLOR[o.key] }}>RECOMMENDED</span>}
-              </div>
-              <div className="mt-4 space-y-3">
-                <Stat label={`Net worth after ${months(result.horizon)}`} value={inrShort(o.netWorth)} tone={OPT_COLOR[o.key]} />
-                <div className="grid grid-cols-2 gap-3">
-                  <Stat label="Debt-free in" value={months(o.debtFreeMonths)} />
-                  <Stat label="Interest paid" value={inrShort(o.totalInterest)} tone={C.danger} />
+      {/* Monthly outflows */}
+      <Card>
+        <SectionTitle sub="How much leaves your account every month for EMIs vs SIPs">
+          📤 Monthly Outflow
+        </SectionTitle>
+        <div className="grid grid-cols-2 gap-4 mb-4">
+          <div className="rounded-xl p-4" style={{ background: C.paper, border: `1px solid ${C.rule}` }}>
+            <div className="text-xs font-medium" style={{ color: C.muted }}>Total EMIs (Debt)</div>
+            <div className="text-xl font-bold mt-1" style={{ ...NUM, color: C.danger }}>{inr(totalEmi)}<span className="text-xs font-normal" style={{ color: C.faint }}>/month</span></div>
+          </div>
+          <div className="rounded-xl p-4" style={{ background: C.paper, border: `1px solid ${C.rule}` }}>
+            <div className="text-xs font-medium" style={{ color: C.muted }}>Total SIPs (Investing)</div>
+            <div className="text-xl font-bold mt-1" style={{ ...NUM, color: C.sure }}>{inr(totalSip)}<span className="text-xs font-normal" style={{ color: C.faint }}>/month</span></div>
+          </div>
+        </div>
+        {(totalEmi + totalSip) > 0 && (
+          <div>
+            <div className="flex h-3 w-full overflow-hidden rounded-full" style={{ background: C.rule }}>
+              {totalEmi > 0 && <div className="h-full" style={{ width: `${(totalEmi / (totalEmi + totalSip)) * 100}%`, background: C.danger }} />}
+              {totalSip > 0 && <div className="h-full" style={{ width: `${(totalSip / (totalEmi + totalSip)) * 100}%`, background: C.sure }} />}
+            </div>
+            <div className="flex justify-between mt-1 text-xs" style={{ color: C.faint }}>
+              <span>EMIs: {inr(totalEmi)}</span>
+              <span>SIPs: {inr(totalSip)}</span>
+            </div>
+          </div>
+        )}
+      </Card>
+
+      {/* Individual debts */}
+      {debts.length > 0 && (
+        <Card>
+          <SectionTitle sub={`${debts.length} active loan${debts.length > 1 ? "s" : ""}`}>
+            💳 Your Debts
+          </SectionTitle>
+          <div className="space-y-3">
+            {debts.sort((a, b) => b.outstanding - a.outstanding).map((d) => (
+              <div key={d.id} className="flex items-center justify-between rounded-xl p-4" style={{ background: C.paper, border: `1px solid ${d.annualInterestRatePct >= 15 ? C.danger : C.rule}` }}>
+                <div>
+                  <div className="text-sm font-semibold" style={{ color: C.ink }}>{d.name}</div>
+                  <div className="flex items-center gap-2 mt-0.5">
+                    <span className="text-xs" style={{ color: C.faint }}>EMI: {inr(d.emi)}/mo</span>
+                    <span className="text-xs" style={{ color: d.annualInterestRatePct >= 15 ? C.danger : C.faint }}>@ {d.annualInterestRatePct}%</span>
+                    {d.remainingTenureMonths > 0 && <span className="text-xs" style={{ color: C.faint }}>{months(d.remainingTenureMonths)} left</span>}
+                  </div>
+                </div>
+                <div className="text-right">
+                  <div className="text-base font-bold" style={{ ...NUM, color: C.danger }}>{inr(d.outstanding)}</div>
+                  {d.annualInterestRatePct >= 15 && (
+                    <span className="text-xs font-semibold" style={{ color: C.danger }}>High cost!</span>
+                  )}
                 </div>
               </div>
-            </Card>
-          );
-        })}
-      </div>
+            ))}
+          </div>
+        </Card>
+      )}
 
+      {/* Individual investments */}
+      {investments.length > 0 && (
+        <Card>
+          <SectionTitle sub={`${investments.length} active investment${investments.length > 1 ? "s" : ""}`}>
+            📈 Your Investments
+          </SectionTitle>
+          <div className="space-y-3">
+            {investments.sort((a, b) => b.currentValue - a.currentValue).map((inv) => (
+              <div key={inv.id} className="flex items-center justify-between rounded-xl p-4" style={{ background: C.paper, border: `1px solid ${C.rule}` }}>
+                <div>
+                  <div className="text-sm font-semibold" style={{ color: C.ink }}>{inv.name}</div>
+                  <div className="flex items-center gap-2 mt-0.5">
+                    {inv.monthlyContribution > 0 && <span className="text-xs" style={{ color: C.faint }}>SIP: {inr(inv.monthlyContribution)}/mo</span>}
+                    <span className="text-xs" style={{ color: C.sure }}>~{inv.expectedAnnualReturnPct || 0}% return</span>
+                  </div>
+                </div>
+                <div className="text-base font-bold text-right" style={{ ...NUM, color: C.sure }}>{inr(inv.currentValue)}</div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+
+      {/* Verdict */}
       <Card>
-        <SectionTitle sub="Net worth trajectory over time">
-          Path Comparison Chart
-        </SectionTitle>
-        <div className="h-72">
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={merged} margin={{ top: 5, right: 8, left: 0, bottom: 5 }}>
-              <CartesianGrid stroke={C.rule} vertical={false} />
-              <XAxis dataKey="year" tick={{ fontSize: 11, fill: C.faint }} axisLine={false} tickLine={false} tickFormatter={(v) => `${Math.round(v)}y`} />
-              <YAxis tick={{ fontSize: 11, fill: C.faint }} axisLine={false} tickLine={false} tickFormatter={inrShort} width={54} />
-              <Tooltip content={<ChartTip />} labelFormatter={(v) => `Year ${Number(v).toFixed(1)}`} />
-              <ReferenceLine y={0} stroke={C.faint} />
-              <Line type="monotone" dataKey="Repay" stroke={C.sure} strokeWidth={2} dot={false} />
-              <Line type="monotone" dataKey="Invest" stroke={C.model} strokeWidth={2} dot={false} />
-              <Line type="monotone" dataKey="Split" stroke={C.warn} strokeWidth={2} strokeDasharray="4 3" dot={false} />
-            </LineChart>
-          </ResponsiveContainer>
+        <div className="rounded-xl p-5 text-center" style={{ background: `${verdict.tone}12`, border: `1.5px solid ${verdict.tone}33` }}>
+          <div className="text-lg font-bold mb-2" style={{ color: verdict.tone }}>
+            {isPositive && totalDebt === 0 ? "🎉" : isPositive ? "👍" : "⚠️"} Bottom Line
+          </div>
+          <p className="text-sm leading-relaxed" style={{ color: C.ink }}>{verdict.text}</p>
+          {avgDebtRate > 0 && avgInvestReturn > 0 && (
+            <div className="flex justify-center gap-6 mt-4 text-xs" style={{ color: C.muted }}>
+              <span>Avg debt cost: <strong style={{ color: C.danger }}>{pct(avgDebtRate)}</strong></span>
+              <span>Avg investment return: <strong style={{ color: C.sure }}>~{pct(avgInvestReturn)}</strong></span>
+            </div>
+          )}
         </div>
       </Card>
     </div>
@@ -2112,7 +2196,7 @@ function InputsPanel({ data, setData, onClose }) {
             label="Full Name"
             value={data.personal?.name}
             onChange={(v) => set(["personal", "name"], v)}
-            placeholder="e.g. Apurva Donde"
+            placeholder="e.g. Your Name"
           />
           <TextField
             label="Email Address"
@@ -2505,7 +2589,6 @@ const TABS = [
   { id: "grow", label: "Grow" },
   { id: "simulate", label: "What if" },
   { id: "afford", label: "Can I afford it" },
-  { id: "inputs", label: "Your numbers & Profile" },
 ];
 
 function FinCompassApp() {
@@ -2523,17 +2606,17 @@ function FinCompassApp() {
       if (saved) {
         const parsed = JSON.parse(saved);
         return {
-          ...DEMO,
+          ...BLANK_TEMPLATE,
           ...parsed,
-          personal: { ...DEMO.personal, ...parsed.personal },
-          cashFlow: { ...DEMO.cashFlow, ...parsed.cashFlow },
-          savings: { ...DEMO.savings, ...parsed.savings },
+          personal: { ...BLANK_TEMPLATE.personal, ...parsed.personal },
+          cashFlow: { ...BLANK_TEMPLATE.cashFlow, ...parsed.cashFlow },
+          savings: { ...BLANK_TEMPLATE.savings, ...parsed.savings },
         };
       }
     } catch (e) {
       console.error("Failed to load saved state:", e);
     }
-    return DEMO;
+    return BLANK_TEMPLATE;
   });
 
   // ── Banks & Cash state ──────────────────────────────────────────
@@ -2560,7 +2643,6 @@ function FinCompassApp() {
 
   const saveCategories = useCallback((cats) => {
     try { localStorage.setItem("fincompass_categories_v1", JSON.stringify(cats)); } catch {}
-    // Optionally save to Firebase here
   }, []);
 
   const handleEditBudget = useCallback((catId, budget) => {
@@ -2599,27 +2681,55 @@ function FinCompassApp() {
   const [tab, setTab] = useState("decide");
   const saveTimerRef = useRef(null);
 
-  // ── Load from Firestore on mount ────────────────────────────────
-  useEffect(() => {
-    if (!FIREBASE_CONFIGURED) { setSyncStatus("offline"); return; }
+  // ── Auth state ──────────────────────────────────────────────────
+  const [authUser, setAuthUser] = useState(() => (auth ? auth.currentUser : null));
+  const [authLoading, setAuthLoading] = useState(FIREBASE_CONFIGURED);
+
+  const loadDataForUser = useCallback((user) => {
+    if (!FIREBASE_CONFIGURED || !user) {
+      setSyncStatus("offline");
+      return;
+    }
     setSyncStatus("syncing");
     Promise.all([loadUserData(), loadBanks(), loadDailyLogs()])
       .then(([userData, banksData, logsData]) => {
         if (userData) {
           setData((prev) => ({
-            ...DEMO,
+            ...BLANK_TEMPLATE,
             ...userData,
-            personal: { ...DEMO.personal, ...userData.personal },
-            cashFlow: { ...DEMO.cashFlow, ...userData.cashFlow },
-            savings: { ...DEMO.savings, ...userData.savings },
+            personal: {
+              ...BLANK_TEMPLATE.personal,
+              ...userData.personal,
+              name: userData.personal?.name || user.displayName || "",
+              email: user.email || userData.personal?.email || "",
+            },
+            cashFlow: { ...BLANK_TEMPLATE.cashFlow, ...userData.cashFlow },
+            savings: { ...BLANK_TEMPLATE.savings, ...userData.savings },
           }));
+        } else {
+          // First time sign-in: all numbers zeroed, name and email from auth
+          const freshData = {
+            ...BLANK_TEMPLATE,
+            personal: {
+              ...BLANK_TEMPLATE.personal,
+              name: user.displayName || (user.email ? user.email.split("@")[0] : ""),
+              email: user.email || "",
+            },
+          };
+          setData(freshData);
+          saveUserData(freshData).catch(() => {});
         }
         if (banksData) {
           setBanksRaw(banksData.banks || []);
           setCashRaw(banksData.cash || 0);
+        } else {
+          setBanksRaw([]);
+          setCashRaw(0);
         }
         if (logsData) {
           setDailyLogsRaw(logsData);
+        } else {
+          setDailyLogsRaw({});
         }
         setSyncStatus("synced");
       })
@@ -2629,22 +2739,69 @@ function FinCompassApp() {
       });
   }, []);
 
+  // ── Auth state listener & data load ─────────────────────────────
+  useEffect(() => {
+    if (!FIREBASE_CONFIGURED || !auth) {
+      setAuthLoading(false);
+      return;
+    }
+    const unsub = onAuthStateChanged(auth, (user) => {
+      setAuthUser(user);
+      setAuthLoading(false);
+      if (user) {
+        loadDataForUser(user);
+      }
+    });
+    return () => unsub();
+  }, [loadDataForUser]);
 
+  const handleSignOut = async () => {
+    try {
+      await logout();
+      setAuthUser(null);
+      try {
+        localStorage.removeItem("fincompass_user_data_v2");
+        localStorage.removeItem("fincompass_banks_v1");
+        localStorage.removeItem("fincompass_cash_v1");
+        localStorage.removeItem("fincompass_daily_logs_v1");
+        localStorage.removeItem("fincompass_skipped_auth");
+      } catch {}
+      setData(BLANK_TEMPLATE);
+      setBanksRaw([]);
+      setCashRaw(0);
+      setDailyLogsRaw({});
+    } catch (e) {
+      console.error("Sign out error:", e);
+    }
+  };
+
+
+
+  const banksRef = useRef(banks);
+  banksRef.current = banks;
+  const cashRef = useRef(cash);
+  cashRef.current = cash;
+  const dailyLogsRef = useRef(dailyLogs);
+  dailyLogsRef.current = dailyLogs;
 
   const setBanks = useCallback((updater) => {
     setBanksRaw((prev) => {
       const next = typeof updater === "function" ? updater(prev) : updater;
       try { localStorage.setItem("fincompass_banks_v1", JSON.stringify(next)); } catch {}
-      saveBanks(next, cash).catch(() => {});
+      saveBanks(next, cashRef.current).catch(() => {});
       return next;
     });
-  }, [cash]);
+  }, []);
 
-  const setCash = useCallback((val) => {
-    setCashRaw(val);
-    try { localStorage.setItem("fincompass_cash_v1", String(val)); } catch {}
-    saveBanks(banks, val).catch(() => {});
-  }, [banks]);
+  const setCash = useCallback((updater) => {
+    setCashRaw((prev) => {
+      const next = typeof updater === "function" ? updater(prev) : updater;
+      const numVal = Math.max(0, Math.round(Number(next) || 0));
+      try { localStorage.setItem("fincompass_cash_v1", String(numVal)); } catch {}
+      saveBanks(banksRef.current, numVal).catch(() => {});
+      return numVal;
+    });
+  }, []);
 
   // ── Auto-sync bank balances → savings.bankBalance and savings.cash ─
   useEffect(() => {
@@ -2659,24 +2816,121 @@ function FinCompassApp() {
     }));
   }, [banks, cash]);
 
+  // ── Monthly expense sync: daily tracker → profile expenses ──────
+  // Maps daily tracker categories to profile expense fields so that
+  // Health, Decide, Net Worth, etc. reflect actual tracked spending.
+  const CAT_TO_EXPENSE = useMemo(() => ({
+    food: "food",
+    groceries: "food",       // groceries counts toward food
+    transport: "transport",
+    bills: "utilities",
+    entertainment: "entertainment",
+    shopping: "other",
+    health: "other",
+    education: "other",
+  }), []);
+
+  useEffect(() => {
+    const currentMonthStr = new Date().toISOString().slice(0, 7);
+    const catSums = {};
+    Object.keys(dailyLogs).forEach((dateStr) => {
+      if (!dateStr.startsWith(currentMonthStr)) return;
+      (dailyLogs[dateStr]?.entries || []).forEach((e) => {
+        if (e.type === "credit") return; // skip income entries
+        const expenseField = CAT_TO_EXPENSE[e.catId];
+        if (expenseField) {
+          catSums[expenseField] = (catSums[expenseField] || 0) + e.amount;
+        }
+      });
+    });
+    // Only update if there are tracked transactions
+    if (Object.keys(catSums).length > 0) {
+      setData((prev) => {
+        const prevExpenses = prev.cashFlow?.expenses || {};
+        const newExpenses = { ...prevExpenses };
+        // Overwrite tracked categories with daily tracker totals
+        Object.entries(catSums).forEach(([field, total]) => {
+          newExpenses[field] = Math.round(total);
+        });
+        // Skip update if nothing actually changed (prevents infinite loop)
+        const changed = Object.entries(catSums).some(
+          ([field, total]) => Math.round(total) !== (prevExpenses[field] || 0)
+        );
+        if (!changed) return prev;
+        return {
+          ...prev,
+          cashFlow: { ...prev.cashFlow, expenses: newExpenses },
+        };
+      });
+    }
+  }, [dailyLogs, CAT_TO_EXPENSE]);
+
   // ── Daily log helpers ───────────────────────────────────────────
   const handleAddEntry = useCallback((dateStr, entry) => {
     setDailyLogsRaw((prev) => {
       const dayLog = prev[dateStr] || { entries: [], totalSpent: 0 };
       const newEntries = [...dayLog.entries, entry];
-      const newLog = { entries: newEntries, totalSpent: newEntries.reduce((s, e) => s + e.amount, 0) };
+      const debitsTotal = newEntries.filter((e) => e.type !== "credit").reduce((s, e) => s + e.amount, 0);
+      const newLog = { entries: newEntries, totalSpent: debitsTotal };
       const next = { ...prev, [dateStr]: newLog };
       try { localStorage.setItem("fincompass_daily_logs_v1", JSON.stringify(next)); } catch {}
       saveDailyLog(dateStr, newLog).catch(() => {});
       return next;
     });
-  }, []);
+
+    // Directly calculate and update Cash or Bank account balance!
+    if (entry.accountId) {
+      const delta = entry.type === "credit" ? entry.amount : -entry.amount;
+      if (entry.accountId === "cash") {
+        setCash((prevCash) => Math.max(0, (Number(prevCash) || 0) + delta));
+      } else {
+        setBanks((prevBanks) =>
+          prevBanks.map((b) =>
+            b.id === entry.accountId
+              ? { ...b, balance: Math.max(0, (Number(b.balance) || 0) + delta) }
+              : b
+          )
+        );
+      }
+    }
+
+    // Auto-link EMI: reduce debt outstanding
+    if (entry.debtId && entry.amount > 0) {
+      setData((prev) => ({
+        ...prev,
+        debts: (prev.debts || []).map((d) =>
+          d.id === entry.debtId
+            ? {
+                ...d,
+                outstanding: Math.max(0, (d.outstanding || 0) - entry.amount),
+                remainingTenureMonths: Math.max(0, (d.remainingTenureMonths || 0) - (entry.amount >= (d.emi || 0) * 0.9 ? 1 : 0)),
+              }
+            : d
+        ),
+      }));
+    }
+
+    // Auto-link Investment: increase investment value
+    if (entry.investmentId && entry.amount > 0) {
+      setData((prev) => ({
+        ...prev,
+        investments: (prev.investments || []).map((inv) =>
+          inv.id === entry.investmentId
+            ? { ...inv, currentValue: (inv.currentValue || 0) + entry.amount }
+            : inv
+        ),
+      }));
+    }
+  }, [setCash, setBanks]);
 
   const handleDeleteEntry = useCallback((dateStr, entryId) => {
+    const target = dailyLogsRef.current[dateStr]?.entries?.find((e) => e.id === entryId);
+
     setDailyLogsRaw((prev) => {
       const dayLog = prev[dateStr] || { entries: [] };
       const newEntries = dayLog.entries.filter((e) => e.id !== entryId);
-      const newLog = { entries: newEntries, totalSpent: newEntries.reduce((s, e) => s + e.amount, 0) };
+      const debitsTotal = newEntries.filter((e) => e.type !== "credit").reduce((s, e) => s + e.amount, 0);
+      const newLog = { entries: newEntries, totalSpent: debitsTotal };
       const next = { ...prev, [dateStr]: newLog };
       if (newEntries.length === 0) {
         const { [dateStr]: _, ...rest } = next;
@@ -2688,7 +2942,51 @@ function FinCompassApp() {
       deleteDailyEntry(dateStr, newLog).catch(() => {});
       return next;
     });
-  }, []);
+
+    // Revert the calculation on account balance
+    if (target && target.accountId) {
+      const revertDelta = target.type === "credit" ? -target.amount : target.amount;
+      if (target.accountId === "cash") {
+        setCash((prevCash) => Math.max(0, (Number(prevCash) || 0) + revertDelta));
+      } else {
+        setBanks((prevBanks) =>
+          prevBanks.map((b) =>
+            b.id === target.accountId
+              ? { ...b, balance: Math.max(0, (Number(b.balance) || 0) + revertDelta) }
+              : b
+          )
+        );
+      }
+    }
+
+    // Revert debt outstanding if EMI was linked
+    if (target && target.debtId && target.amount > 0) {
+      setData((prev) => ({
+        ...prev,
+        debts: (prev.debts || []).map((d) =>
+          d.id === target.debtId
+            ? {
+                ...d,
+                outstanding: (d.outstanding || 0) + target.amount,
+                remainingTenureMonths: (d.remainingTenureMonths || 0) + (target.amount >= (d.emi || 0) * 0.9 ? 1 : 0),
+              }
+            : d
+        ),
+      }));
+    }
+
+    // Revert investment value if SIP was linked
+    if (target && target.investmentId && target.amount > 0) {
+      setData((prev) => ({
+        ...prev,
+        investments: (prev.investments || []).map((inv) =>
+          inv.id === target.investmentId
+            ? { ...inv, currentValue: Math.max(0, (inv.currentValue || 0) - target.amount) }
+            : inv
+        ),
+      }));
+    }
+  }, [setCash, setBanks]);
 
 
   useEffect(() => {
@@ -2736,6 +3034,49 @@ function FinCompassApp() {
     ? { text: "☁️ Synced", color: C.sure }
     : { text: "📵 Offline", color: C.faint };
 
+  if (FIREBASE_CONFIGURED && authLoading) {
+    return (
+      <div
+        style={{
+          minHeight: "100vh",
+          background: "#0B1320",
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          fontFamily: FONT,
+          color: "#F8FAFC",
+        }}
+      >
+        <div
+          style={{
+            width: "44px",
+            height: "44px",
+            borderRadius: "50%",
+            border: "3px solid #1E293B",
+            borderTopColor: "#14B8A6",
+            animation: "fc-spin 1s linear infinite",
+            marginBottom: "16px",
+          }}
+        />
+        <style>{`@keyframes fc-spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }`}</style>
+        <p style={{ fontSize: "14px", color: "#94A3B8" }}>Loading FinCompass…</p>
+      </div>
+    );
+  }
+
+  if (FIREBASE_CONFIGURED && !authUser) {
+    return (
+      <AuthPage
+        onAuthSuccess={(user) => {
+          if (user) {
+            setAuthUser(user);
+          }
+        }}
+      />
+    );
+  }
+
   return (
     <ThemeContext.Provider value={C}>
       <div style={{ background: C.paper, minHeight: "100vh", fontFamily: FONT, color: C.ink }}>
@@ -2749,7 +3090,7 @@ function FinCompassApp() {
                 className="flex h-9 w-9 items-center justify-center rounded-full font-bold text-white shadow-sm"
                 style={{ background: C.sure }}
               >
-                {(data.personal?.name || "U")[0].toUpperCase()}
+                {((authUser?.displayName || data.personal?.name || "U")[0] || "U").toUpperCase()}
               </div>
               <div>
                 <div className="flex items-baseline gap-2">
@@ -2757,11 +3098,11 @@ function FinCompassApp() {
                     FinCompass
                   </span>
                   <span className="text-xs font-medium rounded px-1.5 py-0.5" style={{ background: C.card, color: C.ink2, border: `1px solid ${C.rule}` }}>
-                    {data.personal?.name || "User"}
+                    {authUser?.displayName || data.personal?.name || "User"}
                   </span>
                 </div>
                 <div className="text-xs" style={{ color: C.muted }}>
-                  {data.personal?.city || "India"} · age {data.personal?.age} · {data.personal?.email || "No email"}
+                  {data.personal?.city || "India"} · {authUser?.email || data.personal?.email || "Local storage"}
                 </div>
               </div>
             </div>
@@ -2781,11 +3122,26 @@ function FinCompassApp() {
               </button>
               <button
                 onClick={() => setTab("inputs")}
-                className="hidden sm:inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium border transition-colors"
-                style={{ borderColor: C.rule, color: C.ink2, background: C.card }}
+                className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium border transition-colors"
+                style={{
+                  borderColor: tab === "inputs" ? C.ink : C.rule,
+                  color: tab === "inputs" ? C.paper : C.ink2,
+                  background: tab === "inputs" ? C.ink : C.card,
+                  fontWeight: tab === "inputs" ? 600 : 500,
+                }}
               >
-                ✏️ Profile & Numbers
+                👤 Profile
               </button>
+              {authUser && (
+                <button
+                  onClick={handleSignOut}
+                  className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium border transition-colors"
+                  style={{ borderColor: C.rule, color: C.danger, background: C.card }}
+                  title={`Signed in as ${authUser.email}`}
+                >
+                  🚪 Sign out
+                </button>
+              )}
               <div className="text-right">
                 <div className="text-xs" style={{ color: C.faint }}>Financial health</div>
                 <div className="text-sm font-semibold" style={{ ...NUM, color: bandColor }}>
@@ -2833,6 +3189,10 @@ function FinCompassApp() {
               onAddEntry={handleAddEntry}
               onDeleteEntry={handleDeleteEntry}
               categories={categories}
+              banks={banks}
+              cash={cash}
+              debts={data.debts || []}
+              investments={data.investments || []}
             />
           )}
           {tab === "analysis" && (
@@ -2878,7 +3238,7 @@ function FinCompassApp() {
               investment returns are uncertain and can be negative, while debt interest is contractual.
             </p>
             <p className="mt-3 text-xs" style={{ color: C.faint }}>
-              Showing profile for <strong>{data.personal?.name}</strong> ({data.personal?.city}). Open “Your numbers & Profile” to edit any input or add multiple loans/credit cards.
+              Showing profile for <strong>{data.personal?.name}</strong> ({data.personal?.city}). Open “Profile” to edit any input or add multiple loans/credit cards.
             </p>
           </footer>
         </main>

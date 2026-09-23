@@ -17,6 +17,8 @@ export const DEFAULT_CATEGORIES = [
   { id: "health", label: "Health", icon: "💊", color: "#22C55E", budget: 0 },
   { id: "groceries", label: "Groceries", icon: "🧺", color: "#14B8A6", budget: 0 },
   { id: "education", label: "Education", icon: "📚", color: "#6366F1", budget: 0 },
+  { id: "emi", label: "EMI / Loan Payment", icon: "🏦", color: "#EF4444", budget: 0 },
+  { id: "investment", label: "SIP / Investment", icon: "📈", color: "#059669", budget: 0 },
   { id: "salary", label: "Salary / Income", icon: "💼", color: "#10B981", budget: 0 },
   { id: "transfer", label: "Transfer", icon: "🔄", color: "#64748B", budget: 0 },
   { id: "other", label: "Other", icon: "📦", color: "#94A3B8", budget: 0 },
@@ -56,20 +58,27 @@ function getLast30Days() {
 }
 
 /* ─── Transaction Form ──────────────────────────────────────────── */
-function TransactionForm({ onAdd, categories, C }) {
+function TransactionForm({ onAdd, categories, C, banks, cash, debts, investments }) {
   const [amount, setAmount] = useState("");
   const [type, setType] = useState("debit"); // credit | debit
   const [catId, setCatId] = useState(categories[0]?.id || "food");
   const [note, setNote] = useState("");
   const [method, setMethod] = useState("upi");
+  const [accountId, setAccountId] = useState(""); // bank id, "cash", or "" (none)
+  const [debtId, setDebtId] = useState("");
+  const [investmentId, setInvestmentId] = useState("");
 
   const cat = categories.find((c) => c.id === catId) || categories[0];
+  const activeDebts = (debts || []).filter((d) => d.outstanding > 0);
+  const activeInvestments = investments || [];
+  const isEmi = catId === "emi";
+  const isInvestment = catId === "investment";
 
   const handleSubmit = (e) => {
     e.preventDefault();
     const amt = parseFloat(amount);
     if (!amt || amt <= 0) return;
-    onAdd({
+    const entry = {
       id: "tx_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6),
       time: new Date().toISOString(),
       type, // "credit" or "debit"
@@ -77,10 +86,26 @@ function TransactionForm({ onAdd, categories, C }) {
       note: note.trim(),
       amount: amt,
       method,
-    });
+    };
+    // Link to account for balance tracking
+    if (accountId) entry.accountId = accountId;
+    // Link to specific debt or investment
+    if (isEmi && debtId) entry.debtId = debtId;
+    if (isInvestment && investmentId) entry.investmentId = investmentId;
+    onAdd(entry);
     setAmount("");
     setNote("");
   };
+
+  // Build account options from banks + cash
+  const accountOptions = useMemo(() => {
+    const opts = [{ value: "", label: "— Don't track account —" }];
+    if (typeof cash === "number") opts.push({ value: "cash", label: `💵 Cash in Hand (${inr(cash)})` });
+    (banks || []).forEach((b) => {
+      opts.push({ value: b.id, label: `🏦 ${b.name} (${inr(b.balance || 0)})` });
+    });
+    return opts;
+  }, [banks, cash]);
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
@@ -133,7 +158,7 @@ function TransactionForm({ onAdd, categories, C }) {
             <button
               key={c.id}
               type="button"
-              onClick={() => setCatId(c.id)}
+              onClick={() => { setCatId(c.id); setDebtId(""); setInvestmentId(""); }}
               className="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition-all"
               style={{
                 background: catId === c.id ? c.color : `${c.color}1A`,
@@ -146,6 +171,71 @@ function TransactionForm({ onAdd, categories, C }) {
             </button>
           ))}
         </div>
+      </div>
+
+      {/* EMI — Debt picker */}
+      {isEmi && activeDebts.length > 0 && (
+        <div>
+          <label className="text-xs font-medium" style={{ color: C.muted }}>Link to Loan / Debt</label>
+          <select
+            value={debtId}
+            onChange={(e) => setDebtId(e.target.value)}
+            className="mt-1 w-full rounded-xl border px-3 py-2 text-sm focus:outline-none"
+            style={{ borderColor: "#EF4444", color: C.ink, background: C.card }}
+          >
+            <option value="" style={{ background: C.card }}>— Select a loan —</option>
+            {activeDebts.map((d) => (
+              <option key={d.id} value={d.id} style={{ background: C.card }}>
+                {d.name} — ₹{Math.round(d.outstanding).toLocaleString("en-IN")} @ {d.annualInterestRatePct}%
+              </option>
+            ))}
+          </select>
+          {debtId && (
+            <div className="mt-1.5 text-xs rounded-lg px-3 py-2" style={{ background: "#EF444415", color: "#EF4444" }}>
+              ✅ This payment will reduce the outstanding balance of the linked loan
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Investment — Investment picker */}
+      {isInvestment && activeInvestments.length > 0 && (
+        <div>
+          <label className="text-xs font-medium" style={{ color: C.muted }}>Link to Investment</label>
+          <select
+            value={investmentId}
+            onChange={(e) => setInvestmentId(e.target.value)}
+            className="mt-1 w-full rounded-xl border px-3 py-2 text-sm focus:outline-none"
+            style={{ borderColor: "#059669", color: C.ink, background: C.card }}
+          >
+            <option value="" style={{ background: C.card }}>— Select an investment —</option>
+            {activeInvestments.map((inv) => (
+              <option key={inv.id} value={inv.id} style={{ background: C.card }}>
+                {inv.name} — ₹{Math.round(inv.currentValue).toLocaleString("en-IN")}
+              </option>
+            ))}
+          </select>
+          {investmentId && (
+            <div className="mt-1.5 text-xs rounded-lg px-3 py-2" style={{ background: "#05966915", color: "#059669" }}>
+              ✅ This amount will be added to the linked investment's value
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Account selector */}
+      <div>
+        <label className="text-xs font-medium" style={{ color: C.muted }}>Deduct from / Credit to Account</label>
+        <select
+          value={accountId}
+          onChange={(e) => setAccountId(e.target.value)}
+          className="mt-1 w-full rounded-xl border px-3 py-2 text-sm focus:outline-none"
+          style={{ borderColor: C.rule, color: C.ink, background: C.card }}
+        >
+          {accountOptions.map((o) => (
+            <option key={o.value} value={o.value} style={{ background: C.card }}>{o.label}</option>
+          ))}
+        </select>
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2">
@@ -191,12 +281,19 @@ function TransactionForm({ onAdd, categories, C }) {
 }
 
 /* ─── Single Transaction Row ─────────────────────────────────────── */
-function TxRow({ tx, categories, onDelete, C }) {
+function TxRow({ tx, categories, onDelete, C, banks }) {
   const cat = categories.find((c) => c.id === tx.catId) || { icon: "📦", label: "Other", color: "#94A3B8" };
   const isCredit = tx.type === "credit";
   const time = new Date(tx.time).toLocaleTimeString("en-IN", {
     hour: "2-digit", minute: "2-digit", hour12: true,
   });
+
+  // Resolve account name
+  const accountLabel = tx.accountId
+    ? tx.accountId === "cash"
+      ? "💵 Cash"
+      : (banks || []).find((b) => b.id === tx.accountId)?.name || "🏦 Bank"
+    : null;
 
   return (
     <div
@@ -216,10 +313,15 @@ function TxRow({ tx, categories, onDelete, C }) {
         <div className="text-sm font-medium truncate" style={{ color: C.ink }}>
           {tx.note || cat.label}
         </div>
-        <div className="flex items-center gap-2 mt-0.5">
+        <div className="flex items-center gap-2 mt-0.5 flex-wrap">
           <span className="text-xs px-1.5 py-0.5 rounded-full" style={{ background: `${cat.color}1A`, color: cat.color }}>
             {cat.icon} {cat.label}
           </span>
+          {accountLabel && (
+            <span className="text-xs px-1.5 py-0.5 rounded-full" style={{ background: isCredit ? "#34D39915" : "#818CF815", color: isCredit ? "#34D399" : "#818CF8" }}>
+              {accountLabel}
+            </span>
+          )}
           <span className="text-xs" style={{ color: C.faint }}>{time}</span>
           <span className="text-xs" style={{ color: C.faint }}>· {PAY_METHODS.find((m) => m.value === tx.method)?.label?.split(" ")[0] || tx.method}</span>
         </div>
@@ -294,7 +396,7 @@ function DayStrip({ days, selected, onSelect, logs, C }) {
 }
 
 /* ─── Main Component ──────────────────────────────────────────────── */
-export default function DailyTrackerTab({ logs, onAddEntry, onDeleteEntry, categories }) {
+export default function DailyTrackerTab({ logs, onAddEntry, onDeleteEntry, categories, banks, cash, debts, investments }) {
   const C = useContext(ThemeContext);
   const [selectedDay, setSelectedDay] = useState(todayStr());
   const [showForm, setShowForm] = useState(true);
@@ -383,7 +485,7 @@ export default function DailyTrackerTab({ logs, onAddEntry, onDeleteEntry, categ
         {/* Add form */}
         {showForm && (
           <div className="p-5" style={{ background: C.paper, borderBottom: `1px solid ${C.rule}` }}>
-            <TransactionForm onAdd={handleAdd} categories={categories} C={C} />
+            <TransactionForm onAdd={handleAdd} categories={categories} C={C} banks={banks} cash={cash} debts={debts} investments={investments} />
           </div>
         )}
 
@@ -400,7 +502,7 @@ export default function DailyTrackerTab({ logs, onAddEntry, onDeleteEntry, categ
               {[...entries]
                 .sort((a, b) => new Date(b.time) - new Date(a.time))
                 .map((tx) => (
-                  <TxRow key={tx.id} tx={tx} categories={categories} onDelete={handleDelete} C={C} />
+                  <TxRow key={tx.id} tx={tx} categories={categories} onDelete={handleDelete} C={C} banks={banks} />
                 ))}
             </div>
           )}
