@@ -21,10 +21,16 @@ export default function AuthPage({ onAuthSuccess }) {
   const [name, setName] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [agreedToTerms, setAgreedToTerms] = useState(false);
+  const [showTermsModal, setShowTermsModal] = useState(false);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError("");
+    if (!agreedToTerms) {
+      setError("Please check the box to agree to the Terms & Conditions.");
+      return;
+    }
     setLoading(true);
     try {
       if (mode === "register") {
@@ -54,6 +60,10 @@ export default function AuthPage({ onAuthSuccess }) {
 
   const handleGoogle = async () => {
     setError("");
+    if (!agreedToTerms) {
+      setError("Please check the box to agree to the Terms & Conditions before continuing with Google.");
+      return;
+    }
     setLoading(true);
     try {
       const u = await loginWithGoogle();
@@ -297,6 +307,67 @@ export default function AuthPage({ onAuthSuccess }) {
               </div>
             )}
 
+            {/* Terms & Conditions Checkbox */}
+            <div
+              style={{
+                display: "flex",
+                alignItems: "flex-start",
+                gap: "10px",
+                margin: "14px 0 18px",
+                cursor: "pointer",
+              }}
+              onClick={() => setAgreedToTerms((prev) => !prev)}
+            >
+              <input
+                type="checkbox"
+                id="terms-checkbox"
+                checked={agreedToTerms}
+                onChange={(e) => setAgreedToTerms(e.target.checked)}
+                onClick={(e) => e.stopPropagation()}
+                style={{
+                  marginTop: "2px",
+                  width: "16px",
+                  height: "16px",
+                  accentColor: "#14B8A6",
+                  cursor: "pointer",
+                }}
+              />
+              <label
+                htmlFor="terms-checkbox"
+                onClick={(e) => e.stopPropagation()}
+                style={{
+                  fontSize: "12px",
+                  color: "#94A3B8",
+                  lineHeight: 1.5,
+                  cursor: "pointer",
+                  userSelect: "none",
+                }}
+              >
+                I agree to the{" "}
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setShowTermsModal(true);
+                  }}
+                  style={{
+                    background: "none",
+                    border: "none",
+                    padding: 0,
+                    color: "#14B8A6",
+                    textDecoration: "underline",
+                    fontWeight: 600,
+                    cursor: "pointer",
+                    fontFamily: FONT,
+                    fontSize: "12px",
+                  }}
+                >
+                  Terms & Conditions
+                </button>
+              </label>
+            </div>
+
             {/* Submit button */}
             <button
               type="submit"
@@ -371,12 +442,149 @@ export default function AuthPage({ onAuthSuccess }) {
           )}
         </div>
 
-        {/* Footer */}
-        <p style={{ textAlign: "center", color: "#475569", fontSize: "11px", marginTop: "24px", lineHeight: 1.5 }}>
-          FinCompass is a personal planning tool. Your data is stored securely
-          {FIREBASE_CONFIGURED ? " in Firebase" : " on your device"}.
-        </p>
+        {/* Visible Description Statement */}
+        <div
+          style={{
+            textAlign: "center",
+            marginTop: "24px",
+            padding: "16px 20px",
+            background: "rgba(15, 23, 42, 0.75)",
+            border: "1px solid rgba(38, 53, 74, 0.7)",
+            borderRadius: "16px",
+            backdropFilter: "blur(12px)",
+            boxShadow: "0 8px 24px rgba(0,0,0,0.3)",
+          }}
+        >
+          <p
+            style={{
+              color: "#CBD5E1",
+              fontSize: "13px",
+              lineHeight: 1.6,
+              margin: 0,
+            }}
+          >
+            <strong style={{ color: "#34D399", fontWeight: 700 }}>FinCompass</strong> is a personal financial planning and decision-making tool that helps you manage your money smarter. Plan your savings, investments, debt, and financial goals all in one place.
+          </p>
+        </div>
       </div>
+
+      {/* Terms & Conditions Modal */}
+      {showTermsModal && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0, 0, 0, 0.75)",
+            backdropFilter: "blur(8px)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 100,
+            padding: "20px",
+          }}
+          onClick={() => setShowTermsModal(false)}
+        >
+          <div
+            style={{
+              background: "#111C2D",
+              border: "1px solid #26354A",
+              borderRadius: "20px",
+              padding: "28px",
+              maxWidth: "520px",
+              width: "100%",
+              boxShadow: "0 20px 50px rgba(0,0,0,0.5)",
+              color: "#F1F5F9",
+              fontFamily: FONT,
+              maxHeight: "85vh",
+              overflowY: "auto",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "18px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                <img src={logoImg} alt="Logo" style={{ width: "32px", height: "32px", borderRadius: "50%" }} />
+                <h3 style={{ margin: 0, fontSize: "18px", fontWeight: 700, color: "#F8FAFC" }}>
+                  Terms & Conditions
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowTermsModal(false)}
+                style={{
+                  background: "none",
+                  border: "none",
+                  color: "#94A3B8",
+                  fontSize: "20px",
+                  cursor: "pointer",
+                  padding: "4px 8px",
+                }}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div style={{ fontSize: "13px", lineHeight: 1.6, color: "#94A3B8" }}>
+              <div style={{ marginBottom: "14px" }}>
+                <h4 style={{ color: "#34D399", fontSize: "14px", margin: "0 0 4px 0", fontWeight: 600 }}>
+                  🔒 1. Your Data is Safe, Private & Secure
+                </h4>
+                <p style={{ margin: 0 }}>
+                  Your privacy is our priority. Your financial records, profile details, and daily transactions are stored directly in your private Firebase Firestore cloud database, authenticated by your account credentials. We never sell, share, or monetize your private financial information.
+                </p>
+              </div>
+
+              <div style={{ marginBottom: "14px" }}>
+                <h4 style={{ color: "#34D399", fontSize: "14px", margin: "0 0 4px 0", fontWeight: 600 }}>
+                  💡 2. Financial Planning & Decision Engine
+                </h4>
+                <p style={{ margin: 0 }}>
+                  FinCompass is an informational decision-support and financial planning engine designed to help you organize your budget, debts, and investments. It does not provide SEBI-registered investment advisory or portfolio execution services. All calculations and projections are illustrative based on the figures you supply.
+                </p>
+              </div>
+
+              <div style={{ marginBottom: "14px" }}>
+                <h4 style={{ color: "#34D399", fontSize: "14px", margin: "0 0 4px 0", fontWeight: 600 }}>
+                  👤 3. Account Ownership & Control
+                </h4>
+                <p style={{ margin: 0 }}>
+                  You maintain 100% control of your account. You can update your salary, bank balances, or reset your inputs at any time. You are responsible for safeguarding your login credentials.
+                </p>
+              </div>
+
+              <div style={{ marginBottom: "18px" }}>
+                <h4 style={{ color: "#34D399", fontSize: "14px", margin: "0 0 4px 0", fontWeight: 600 }}>
+                  ⚖️ 4. Acceptance of Terms
+                </h4>
+                <p style={{ margin: 0 }}>
+                  By creating an account or signing in (via Email or Google), you agree to use FinCompass for personal financial planning and acknowledge these terms.
+                </p>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                setAgreedToTerms(true);
+                setShowTermsModal(false);
+              }}
+              style={{
+                width: "100%",
+                padding: "12px",
+                borderRadius: "12px",
+                border: "none",
+                background: "linear-gradient(135deg, #14B8A6, #0E7C6B)",
+                color: "#fff",
+                fontSize: "14px",
+                fontWeight: 600,
+                cursor: "pointer",
+                marginTop: "10px",
+              }}
+            >
+              I Agree & Understand
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
