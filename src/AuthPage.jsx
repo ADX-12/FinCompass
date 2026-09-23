@@ -41,7 +41,8 @@ export default function AuthPage({ onAuthSuccess }) {
         : err.code === "auth/invalid-credential" ? "Invalid email or password"
         : err.code === "auth/email-already-in-use" ? "An account with this email already exists"
         : err.code === "auth/weak-password" ? "Password must be at least 6 characters"
-        : err.code === "auth/invalid-email" ? "Please enter a valid email address"
+        : err.code === "auth/unauthorized-domain"
+        ? `This website domain (${typeof window !== 'undefined' ? window.location.hostname : 'current domain'}) is not authorized in Firebase. Add it under Firebase Console → Authentication → Settings → Authorized domains.`
         : err.code === "auth/configuration-not-found" || err.code === "auth/operation-not-allowed"
         ? "Email/Password sign-in is not enabled yet in your Firebase Console. Go to Firebase Console → Authentication → Sign-in method and enable 'Email/Password'."
         : err.message || "Something went wrong";
@@ -58,7 +59,9 @@ export default function AuthPage({ onAuthSuccess }) {
       if (onAuthSuccess) onAuthSuccess(u);
     } catch (err) {
       if (err.code !== "auth/popup-closed-by-user") {
-        const msg = err.code === "auth/configuration-not-found" || err.code === "auth/operation-not-allowed"
+        const msg = err.code === "auth/unauthorized-domain"
+          ? `This website domain (${typeof window !== 'undefined' ? window.location.hostname : 'current domain'}) is not authorized in Firebase. Add it under Firebase Console → Authentication → Settings → Authorized domains.`
+          : err.code === "auth/configuration-not-found" || err.code === "auth/operation-not-allowed"
           ? "Google sign-in is not enabled yet in your Firebase Console. Go to Firebase Console → Authentication → Sign-in method and enable 'Google'."
           : err.message || "Google sign-in failed";
         setError(msg);
