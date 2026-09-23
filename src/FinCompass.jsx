@@ -4,6 +4,7 @@ import DailyTrackerTab, { DEFAULT_CATEGORIES } from "./DailyTracker";
 import SpendingAnalysisTab from "./SpendingAnalysis";
 import BalanceSheetTab from "./BalanceSheet";
 import AuthPage from "./AuthPage";
+import logoImg from "./assets/logo.png";
 import { ThemeContext } from "./FinCompassContext";
 import {
   auth,
@@ -3048,15 +3049,26 @@ function FinCompassApp() {
           color: "#F8FAFC",
         }}
       >
+        <img
+          src={logoImg}
+          alt="FinCompass"
+          style={{
+            width: "60px",
+            height: "60px",
+            borderRadius: "50%",
+            marginBottom: "16px",
+            objectFit: "contain",
+          }}
+        />
         <div
           style={{
-            width: "44px",
-            height: "44px",
+            width: "36px",
+            height: "36px",
             borderRadius: "50%",
             border: "3px solid #1E293B",
             borderTopColor: "#14B8A6",
             animation: "fc-spin 1s linear infinite",
-            marginBottom: "16px",
+            marginBottom: "14px",
           }}
         />
         <style>{`@keyframes fc-spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }`}</style>
@@ -3086,12 +3098,13 @@ function FinCompassApp() {
         >
           <div className="mx-auto flex max-w-6xl items-center gap-4 px-4 py-3 sm:px-6">
             <div className="flex items-center gap-3">
-              <div
-                className="flex h-9 w-9 items-center justify-center rounded-full font-bold text-white shadow-sm"
-                style={{ background: C.sure }}
-              >
-                {((authUser?.displayName || data.personal?.name || "U")[0] || "U").toUpperCase()}
-              </div>
+              <img
+                src={logoImg}
+                alt="FinCompass Logo"
+                className="h-10 w-10 rounded-full object-contain shadow-sm cursor-pointer"
+                onClick={() => setTab("decide")}
+                style={{ background: "#0B1320" }}
+              />
               <div>
                 <div className="flex items-baseline gap-2">
                   <span className="text-base font-semibold" style={{ letterSpacing: "-0.02em", color: C.ink }}>
@@ -3102,7 +3115,7 @@ function FinCompassApp() {
                   </span>
                 </div>
                 <div className="text-xs" style={{ color: C.muted }}>
-                  {data.personal?.city || "India"} · {authUser?.email || data.personal?.email || "Local storage"}
+                  {data.personal?.city || "India"} · {authUser?.email || data.personal?.email || "Signed in"}
                 </div>
               </div>
             </div>

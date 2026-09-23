@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import logoImg from "./assets/logo.png";
 import {
   FIREBASE_CONFIGURED,
   registerWithEmail,
@@ -112,24 +113,19 @@ export default function AuthPage({ onAuthSuccess }) {
       <div style={{ width: "100%", maxWidth: "420px", position: "relative", zIndex: 1 }}>
         {/* Logo / Brand */}
         <div style={{ textAlign: "center", marginBottom: "36px" }}>
-          <div
+          <img
+            src={logoImg}
+            alt="FinCompass Logo"
             style={{
-              display: "inline-flex",
-              alignItems: "center",
-              justifyContent: "center",
-              width: "64px",
-              height: "64px",
-              borderRadius: "20px",
-              background: "linear-gradient(135deg, #14B8A6, #0E7C6B)",
-              fontSize: "28px",
-              fontWeight: 800,
-              color: "#fff",
-              boxShadow: "0 8px 32px rgba(20, 184, 166, 0.35)",
+              width: "76px",
+              height: "76px",
+              borderRadius: "50%",
+              boxShadow: "0 8px 32px rgba(20, 184, 166, 0.4)",
               marginBottom: "16px",
+              objectFit: "contain",
+              display: "inline-block",
             }}
-          >
-            F
-          </div>
+          />
           <h1
             style={{
               fontSize: "28px",
