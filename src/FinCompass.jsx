@@ -1324,19 +1324,39 @@ const BILL_CATEGORIES = [
   { value: "other", label: "Other" },
 ];
 
-function getUpcomingPayments(data) {
+function getUpcomingPayments(data, dailyLogs) {
   const today = new Date();
   const currentDay = today.getDate();
   const currentMonth = today.getMonth();
   const currentYear = today.getFullYear();
   const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
+  const monthStr = today.toISOString().slice(0, 7); // e.g. "2026-09"
   const payments = [];
+
+  // Collect all transaction IDs for this month from dailyLogs
+  const paidDebtIds = new Set();
+  const paidInvestmentIds = new Set();
+  const paidBillAmounts = new Map(); // name -> total paid amount
+
+  Object.keys(dailyLogs || {}).forEach((dateStr) => {
+    if (!dateStr.startsWith(monthStr)) return;
+    (dailyLogs[dateStr]?.entries || []).forEach((e) => {
+      if (e.debtId) paidDebtIds.add(e.debtId);
+      if (e.investmentId) paidInvestmentIds.add(e.investmentId);
+      // For bills, track by matching amount in similar categories
+      if (e.type !== "credit" && e.amount > 0) {
+        const key = (e.note || e.catId || "").toLowerCase();
+        paidBillAmounts.set(key, (paidBillAmounts.get(key) || 0) + e.amount);
+      }
+    });
+  });
 
   // EMIs from debts
   (data.debts || []).forEach((d) => {
     if (d.outstanding > 0 && d.emi > 0 && d.paymentDay > 0) {
       const day = Math.min(d.paymentDay, daysInMonth);
       const isPast = day < currentDay;
+      const isPaid = paidDebtIds.has(d.id);
       payments.push({
         id: `emi_${d.id}`,
         name: d.name,
@@ -1346,6 +1366,8 @@ function getUpcomingPayments(data) {
         emoji: "💳",
         isPast,
         isToday: day === currentDay,
+        isPaid,
+        status: isPaid ? "paid" : isPast ? "overdue" : day === currentDay ? "due_today" : "upcoming",
       });
     }
   });
@@ -1355,6 +1377,7 @@ function getUpcomingPayments(data) {
     if (inv.monthlyContribution > 0 && inv.paymentDay > 0) {
       const day = Math.min(inv.paymentDay, daysInMonth);
       const isPast = day < currentDay;
+      const isPaid = paidInvestmentIds.has(inv.id);
       payments.push({
         id: `sip_${inv.id}`,
         name: inv.name,
@@ -1364,15 +1387,31 @@ function getUpcomingPayments(data) {
         emoji: "📈",
         isPast,
         isToday: day === currentDay,
+        isPaid,
+        status: isPaid ? "paid" : isPast ? "overdue" : day === currentDay ? "due_today" : "upcoming",
       });
     }
   });
 
-  // Recurring bills
+  // Recurring bills — no direct transaction link, so check by bill name match in notes
   (data.bills || []).forEach((b) => {
     if (b.amount > 0 && b.paymentDay > 0) {
       const day = Math.min(b.paymentDay, daysInMonth);
       const isPast = day < currentDay;
+      // Heuristic: check if any transaction note contains the bill name (case-insensitive)
+      const billNameLower = (b.name || "").toLowerCase();
+      let isPaid = false;
+      Object.keys(dailyLogs || {}).forEach((dateStr) => {
+        if (!dateStr.startsWith(monthStr)) return;
+        (dailyLogs[dateStr]?.entries || []).forEach((e) => {
+          if (e.type !== "credit" && e.amount > 0) {
+            const note = (e.note || "").toLowerCase();
+            if (note.includes(billNameLower) || (billNameLower.length > 3 && note.includes(billNameLower.slice(0, 4)))) {
+              isPaid = true;
+            }
+          }
+        });
+      });
       payments.push({
         id: `bill_${b.id}`,
         name: b.name,
@@ -1382,6 +1421,8 @@ function getUpcomingPayments(data) {
         emoji: "📄",
         isPast,
         isToday: day === currentDay,
+        isPaid,
+        status: isPaid ? "paid" : isPast ? "overdue" : day === currentDay ? "due_today" : "upcoming",
       });
     }
   });
@@ -1389,14 +1430,16 @@ function getUpcomingPayments(data) {
   return payments.sort((a, b) => a.day - b.day);
 }
 
-function DecideTab({ data, profile, health, recs, alerts }) {
+function DecideTab({ data, profile, health, recs, alerts, dailyLogs }) {
   const C = useTheme();
   const top = recs[0];
-  const payments = useMemo(() => getUpcomingPayments(data), [data]);
-  const upcomingPayments = payments.filter((p) => !p.isPast || p.isToday);
-  const paidPayments = payments.filter((p) => p.isPast && !p.isToday);
-  const totalUpcoming = upcomingPayments.reduce((s, p) => s + p.amount, 0);
+  const payments = useMemo(() => getUpcomingPayments(data, dailyLogs), [data, dailyLogs]);
+  const overduePayments = payments.filter((p) => p.status === "overdue");
+  const upcomingPayments = payments.filter((p) => p.status === "upcoming" || p.status === "due_today");
+  const paidPayments = payments.filter((p) => p.status === "paid");
+  const totalUpcoming = upcomingPayments.reduce((s, p) => s + p.amount, 0) + overduePayments.reduce((s, p) => s + p.amount, 0);
   const totalMonth = payments.reduce((s, p) => s + p.amount, 0);
+  const paidTotal = paidPayments.reduce((s, p) => s + p.amount, 0);
 
   const healthColor = health.total >= 70 ? C.sure : health.total >= 50 ? C.warn : C.danger;
   const healthBand = health.total >= 85 ? "Excellent" : health.total >= 70 ? "Strong" : health.total >= 55 ? "Stable" : health.total >= 35 ? "Fragile" : "Critical";
@@ -1553,9 +1596,9 @@ function DecideTab({ data, profile, health, recs, alerts }) {
         <div className="rounded-xl p-5 border" style={{ background: C.card, borderColor: C.rule }}>
           <div className="flex items-center justify-between mb-4">
             <div>
-              <div className="text-sm font-semibold" style={{ color: C.ink }}>📅 Upcoming Payments</div>
+              <div className="text-sm font-semibold" style={{ color: C.ink }}>📅 Payments This Month</div>
               <div className="text-xs mt-0.5" style={{ color: C.muted }}>
-                {upcomingPayments.length} remaining this month · {inr(totalUpcoming)} due
+                {paidPayments.length}/{payments.length} paid · {inr(totalUpcoming)} still due
               </div>
             </div>
             <div className="text-right">
@@ -1564,55 +1607,103 @@ function DecideTab({ data, profile, health, recs, alerts }) {
             </div>
           </div>
 
-          <div className="space-y-2">
-            {upcomingPayments.map((p) => (
-              <div
-                key={p.id}
-                className="flex items-center gap-3 rounded-lg px-3 py-2.5"
-                style={{
-                  background: p.isToday ? `${C.warn}15` : C.paper,
-                  border: `1px solid ${p.isToday ? `${C.warn}40` : C.rule}`,
-                }}
-              >
-                <div
-                  className="flex items-center justify-center rounded-lg text-xs font-bold"
-                  style={{
-                    width: 38, height: 38, flexShrink: 0,
-                    background: p.type === "emi" ? `${C.danger}15` : p.type === "sip" ? `${C.model}15` : `${C.warn}15`,
-                    color: p.type === "emi" ? C.danger : p.type === "sip" ? C.model : C.warn,
-                  }}
-                >
-                  {p.day}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="text-sm font-medium truncate" style={{ color: C.ink }}>
-                    {p.emoji} {p.name}
-                  </div>
-                  <div className="text-xs" style={{ color: C.faint }}>
-                    {p.type === "emi" ? "EMI" : p.type === "sip" ? "SIP" : "Bill"}
-                    {p.isToday && <span style={{ color: C.warn, fontWeight: 600 }}> · Due Today</span>}
-                  </div>
-                </div>
-                <div className="text-sm font-bold" style={{ ...NUM, color: p.type === "emi" ? C.danger : p.type === "sip" ? C.model : C.ink }}>
-                  {inr(p.amount)}
-                </div>
+          {/* Overdue payments — red warning */}
+          {overduePayments.length > 0 && (
+            <div className="mb-3">
+              <div className="text-xs font-semibold mb-1.5 flex items-center gap-1" style={{ color: C.danger }}>
+                🔴 Overdue ({overduePayments.length})
               </div>
-            ))}
-          </div>
+              <div className="space-y-2">
+                {overduePayments.map((p) => (
+                  <div
+                    key={p.id}
+                    className="flex items-center gap-3 rounded-lg px-3 py-2.5"
+                    style={{ background: `${C.danger}08`, border: `1px solid ${C.danger}30` }}
+                  >
+                    <div
+                      className="flex items-center justify-center rounded-lg text-xs font-bold"
+                      style={{ width: 38, height: 38, flexShrink: 0, background: `${C.danger}18`, color: C.danger }}
+                    >
+                      {p.day}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-medium truncate" style={{ color: C.ink }}>
+                        {p.emoji} {p.name}
+                      </div>
+                      <div className="text-xs" style={{ color: C.danger, fontWeight: 600 }}>
+                        {p.type === "emi" ? "EMI" : p.type === "sip" ? "SIP" : "Bill"} · Not logged yet
+                      </div>
+                    </div>
+                    <div className="text-sm font-bold" style={{ ...NUM, color: C.danger }}>
+                      {inr(p.amount)}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
+          {/* Upcoming / Due Today */}
+          {upcomingPayments.length > 0 && (
+            <div className="mb-3">
+              {overduePayments.length > 0 && (
+                <div className="text-xs font-semibold mb-1.5" style={{ color: C.muted }}>Upcoming</div>
+              )}
+              <div className="space-y-2">
+                {upcomingPayments.map((p) => (
+                  <div
+                    key={p.id}
+                    className="flex items-center gap-3 rounded-lg px-3 py-2.5"
+                    style={{
+                      background: p.isToday ? `${C.warn}12` : C.paper,
+                      border: `1px solid ${p.isToday ? `${C.warn}40` : C.rule}`,
+                    }}
+                  >
+                    <div
+                      className="flex items-center justify-center rounded-lg text-xs font-bold"
+                      style={{
+                        width: 38, height: 38, flexShrink: 0,
+                        background: p.type === "emi" ? `${C.danger}15` : p.type === "sip" ? `${C.model}15` : `${C.warn}15`,
+                        color: p.type === "emi" ? C.danger : p.type === "sip" ? C.model : C.warn,
+                      }}
+                    >
+                      {p.day}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-medium truncate" style={{ color: C.ink }}>
+                        {p.emoji} {p.name}
+                      </div>
+                      <div className="text-xs" style={{ color: C.faint }}>
+                        {p.type === "emi" ? "EMI" : p.type === "sip" ? "SIP" : "Bill"}
+                        {p.isToday && <span style={{ color: C.warn, fontWeight: 600 }}> · Due Today</span>}
+                      </div>
+                    </div>
+                    <div className="text-sm font-bold" style={{ ...NUM, color: p.type === "emi" ? C.danger : p.type === "sip" ? C.model : C.ink }}>
+                      {inr(p.amount)}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Paid section */}
           {paidPayments.length > 0 && (
-            <div className="mt-3 pt-3 border-t" style={{ borderColor: C.rule }}>
-              <div className="text-xs font-medium mb-2" style={{ color: C.faint }}>✅ Already passed this month</div>
+            <div className="pt-3 border-t" style={{ borderColor: C.rule }}>
+              <div className="text-xs font-semibold mb-2 flex items-center gap-1" style={{ color: C.sure }}>
+                ✅ Paid ({paidPayments.length}) · {inr(paidTotal)}
+              </div>
               <div className="space-y-1">
                 {paidPayments.map((p) => (
                   <div
                     key={p.id}
                     className="flex items-center gap-3 rounded-md px-3 py-1.5"
-                    style={{ opacity: 0.55 }}
+                    style={{ background: `${C.sure}06` }}
                   >
-                    <span className="text-xs font-semibold" style={{ ...NUM, color: C.faint, width: 22 }}>{p.day}</span>
+                    <span className="text-xs font-semibold" style={{ ...NUM, color: C.sure, width: 22 }}>{p.day}</span>
                     <span className="text-xs flex-1 truncate" style={{ color: C.muted }}>{p.emoji} {p.name}</span>
-                    <span className="text-xs font-medium" style={{ ...NUM, color: C.muted }}>{inr(p.amount)}</span>
+                    <span className="rounded px-1.5 py-0.5 text-xs font-semibold" style={{ background: C.sureBg, color: C.sure }}>Paid</span>
+                    <span className="text-xs font-medium" style={{ ...NUM, color: C.sure }}>{inr(p.amount)}</span>
                   </div>
                 ))}
               </div>
@@ -3486,7 +3577,7 @@ function FinCompassApp() {
           {tab === "decide" && (
             <DecideTab
               data={data} profile={profile} health={health}
-              recs={recs} alerts={alerts} allocation={allocation}
+              recs={recs} alerts={alerts} dailyLogs={dailyLogs}
             />
           )}
           {tab === "plan" && (
