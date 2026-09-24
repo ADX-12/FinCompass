@@ -989,13 +989,18 @@ const DEMO = {
     recurringDeposits: 0, cash: 5000, otherLiquid: 0,
   },
   investments: [
-    { id: "i1", name: "Nifty 50 Index Fund", kind: "equity_mutual_fund", currentValue: 62000, monthlyContribution: 5000, expectedAnnualReturnPct: 12, lockInMonths: 0 },
-    { id: "i2", name: "EPF", kind: "epf", currentValue: 31000, monthlyContribution: 1800, expectedAnnualReturnPct: 8.25, lockInMonths: 420 },
-    { id: "i3", name: "Digital Gold", kind: "digital_gold", currentValue: 7000, monthlyContribution: 0, expectedAnnualReturnPct: 8, lockInMonths: 0 },
+    { id: "i1", name: "Nifty 50 Index Fund", kind: "equity_mutual_fund", currentValue: 62000, monthlyContribution: 5000, expectedAnnualReturnPct: 12, lockInMonths: 0, paymentDay: 5 },
+    { id: "i2", name: "EPF", kind: "epf", currentValue: 31000, monthlyContribution: 1800, expectedAnnualReturnPct: 8.25, lockInMonths: 420, paymentDay: 1 },
+    { id: "i3", name: "Digital Gold", kind: "digital_gold", currentValue: 7000, monthlyContribution: 0, expectedAnnualReturnPct: 8, lockInMonths: 0, paymentDay: 0 },
   ],
   debts: [
-    { id: "d1", name: "Personal Loan", kind: "personal_loan", originalPrincipal: 250000, outstanding: 178000, annualInterestRatePct: 12, emi: 8000, remainingTenureMonths: 25, prepaymentPenaltyPct: 2, taxDeductible: false },
-    { id: "d2", name: "HDFC Credit Card", kind: "credit_card", originalPrincipal: 22000, outstanding: 22000, annualInterestRatePct: 42, emi: 2500, remainingTenureMonths: 10, prepaymentPenaltyPct: 0, taxDeductible: false },
+    { id: "d1", name: "Personal Loan", kind: "personal_loan", originalPrincipal: 250000, outstanding: 178000, annualInterestRatePct: 12, emi: 8000, remainingTenureMonths: 25, prepaymentPenaltyPct: 2, taxDeductible: false, paymentDay: 5 },
+    { id: "d2", name: "HDFC Credit Card", kind: "credit_card", originalPrincipal: 22000, outstanding: 22000, annualInterestRatePct: 42, emi: 2500, remainingTenureMonths: 10, prepaymentPenaltyPct: 0, taxDeductible: false, paymentDay: 15 },
+  ],
+  bills: [
+    { id: "b1", name: "Electricity Bill", amount: 1800, paymentDay: 10, category: "utilities" },
+    { id: "b2", name: "Netflix + Spotify", amount: 800, paymentDay: 20, category: "subscriptions" },
+    { id: "b3", name: "Rent", amount: 13000, paymentDay: 1, category: "rent" },
   ],
   assets: [],
   goals: [
@@ -1050,6 +1055,7 @@ const BLANK_TEMPLATE = {
   },
   investments: [],
   debts: [],
+  bills: [],
   assets: [],
   goals: [],
   assumptions: {
@@ -1308,105 +1314,314 @@ function ChartTip({ active, payload, label, formatter }) {
 /* DECIDE TAB                                                         */
 /* ================================================================== */
 
-function AllocationWaterfall({ allocation }) {
-  const C = useTheme();
-  if (!allocation.buckets.length) return null;
-  const palette = (b) => (b.certainty === "guaranteed" ? C.sure : C.model);
+const BILL_CATEGORIES = [
+  { value: "rent", label: "Rent" },
+  { value: "utilities", label: "Utilities (Electricity, Water, Gas)" },
+  { value: "subscriptions", label: "Subscriptions (OTT, SaaS)" },
+  { value: "insurance", label: "Insurance Premium" },
+  { value: "phone", label: "Phone / Internet" },
+  { value: "maintenance", label: "Society / Maintenance" },
+  { value: "other", label: "Other" },
+];
 
-  return (
-    <div>
-      <div className="flex h-3 w-full overflow-hidden rounded-full" style={{ background: C.rule }}>
-        {allocation.buckets.map((b, i) => (
-          <div
-            key={b.id + i}
-            style={{
-              width: `${b.sharePct}%`,
-              background: palette(b),
-              opacity: 1 - i * 0.13,
-              borderRight: i < allocation.buckets.length - 1 ? `2px solid ${C.card}` : "none",
-            }}
-            title={`${b.target}: ${inr(b.amount)}`}
-          />
-        ))}
-      </div>
+function getUpcomingPayments(data) {
+  const today = new Date();
+  const currentDay = today.getDate();
+  const currentMonth = today.getMonth();
+  const currentYear = today.getFullYear();
+  const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
+  const payments = [];
 
-      <ul className="mt-4 space-y-3">
-        {allocation.buckets.map((b, i) => (
-          <li key={b.id + i} className="flex gap-3">
-            <span
-              className="mt-1.5 h-2.5 w-2.5 shrink-0 rounded-sm"
-              style={{ background: palette(b), opacity: 1 - i * 0.13 }}
-            />
-            <div className="min-w-0 flex-1">
-              <div className="flex flex-wrap items-baseline gap-x-2">
-                <span className="font-medium" style={{ color: C.ink }}>{b.target}</span>
-                <Certainty kind={b.certainty} />
-                <span className="ml-auto font-semibold" style={{ ...NUM, color: C.ink }}>
-                  {inr(b.amount)}
-                </span>
-              </div>
-              <p className="mt-1 text-sm leading-relaxed" style={{ color: C.muted }}>{b.reason}</p>
-              <p className="mt-1 text-sm" style={{ color: b.certainty === "guaranteed" ? C.sure : C.model }}>
-                {b.impact}
-              </p>
-            </div>
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
+  // EMIs from debts
+  (data.debts || []).forEach((d) => {
+    if (d.outstanding > 0 && d.emi > 0 && d.paymentDay > 0) {
+      const day = Math.min(d.paymentDay, daysInMonth);
+      const isPast = day < currentDay;
+      payments.push({
+        id: `emi_${d.id}`,
+        name: d.name,
+        amount: d.emi,
+        day,
+        type: "emi",
+        emoji: "💳",
+        isPast,
+        isToday: day === currentDay,
+      });
+    }
+  });
+
+  // SIPs from investments
+  (data.investments || []).forEach((inv) => {
+    if (inv.monthlyContribution > 0 && inv.paymentDay > 0) {
+      const day = Math.min(inv.paymentDay, daysInMonth);
+      const isPast = day < currentDay;
+      payments.push({
+        id: `sip_${inv.id}`,
+        name: inv.name,
+        amount: inv.monthlyContribution,
+        day,
+        type: "sip",
+        emoji: "📈",
+        isPast,
+        isToday: day === currentDay,
+      });
+    }
+  });
+
+  // Recurring bills
+  (data.bills || []).forEach((b) => {
+    if (b.amount > 0 && b.paymentDay > 0) {
+      const day = Math.min(b.paymentDay, daysInMonth);
+      const isPast = day < currentDay;
+      payments.push({
+        id: `bill_${b.id}`,
+        name: b.name,
+        amount: b.amount,
+        day,
+        type: "bill",
+        emoji: "📄",
+        isPast,
+        isToday: day === currentDay,
+      });
+    }
+  });
+
+  return payments.sort((a, b) => a.day - b.day);
 }
 
-function DecideTab({ data, profile, health, recs, alerts, allocation }) {
+function DecideTab({ data, profile, health, recs, alerts }) {
   const C = useTheme();
-  const [windfall, setWindfall] = useState(100000);
-  const windfallPlan = useMemo(
-    () => allocate(data, profile, windfall, "windfall"),
-    [data, profile, windfall]
-  );
   const top = recs[0];
+  const payments = useMemo(() => getUpcomingPayments(data), [data]);
+  const upcomingPayments = payments.filter((p) => !p.isPast || p.isToday);
+  const paidPayments = payments.filter((p) => p.isPast && !p.isToday);
+  const totalUpcoming = upcomingPayments.reduce((s, p) => s + p.amount, 0);
+  const totalMonth = payments.reduce((s, p) => s + p.amount, 0);
+
+  const healthColor = health.total >= 70 ? C.sure : health.total >= 50 ? C.warn : C.danger;
+  const healthBand = health.total >= 85 ? "Excellent" : health.total >= 70 ? "Strong" : health.total >= 55 ? "Stable" : health.total >= 35 ? "Fragile" : "Critical";
+
+  // Cash flow donut data
+  const flowItems = [
+    { label: "Living", value: profile.living, color: C.warn },
+    { label: "EMIs", value: profile.emi, color: C.danger },
+    { label: "SIPs", value: profile.sip, color: C.model },
+    { label: "Surplus", value: Math.max(0, profile.surplus), color: C.sure },
+  ].filter((f) => f.value > 0);
 
   return (
-    <div className="space-y-6">
-      <div className="rounded-xl p-6 sm:p-7 shadow-sm border" style={{ background: C.card, borderColor: C.rule, color: C.ink }}>
-        <p className="text-sm" style={{ color: C.muted }}>
-          Decision engine status for <strong>{data.personal?.name || "User"}</strong> ({data.personal?.city || "India"})
-        </p>
-        <p className="mt-1 text-xl font-bold" style={{ color: C.ink }}>
-          {allocation.constraint}
-        </p>
-
-        {top && (
-          <div className="mt-6 border-t pt-5" style={{ borderColor: C.rule }}>
-            <div className="flex items-baseline gap-3">
-              <span
-                className="rounded px-2 py-0.5 text-xs font-semibold"
-                style={{ background: top.priority === "critical" ? C.danger : top.priority === "high" ? C.warn : C.ink2, color: "#fff" }}
+    <div className="space-y-5">
+      {/* ── Row 1: Health + Cash Flow ── */}
+      <div className="grid gap-4 sm:grid-cols-2">
+        {/* Health Score Card */}
+        <div
+          className="rounded-xl p-5 border"
+          style={{ background: C.card, borderColor: C.rule }}
+        >
+          <div className="flex items-center gap-4">
+            {/* Score Ring */}
+            <div className="relative" style={{ width: 72, height: 72, flexShrink: 0 }}>
+              <svg viewBox="0 0 36 36" style={{ width: "100%", height: "100%", transform: "rotate(-90deg)" }}>
+                <circle cx="18" cy="18" r="15" fill="none" stroke={C.rule} strokeWidth="3" />
+                <circle
+                  cx="18" cy="18" r="15" fill="none"
+                  stroke={healthColor} strokeWidth="3"
+                  strokeDasharray={`${health.total * 0.9424} 94.24`}
+                  strokeLinecap="round"
+                />
+              </svg>
+              <div
+                className="absolute inset-0 flex items-center justify-center"
+                style={{ fontWeight: 700, fontSize: 16, color: healthColor, ...NUM }}
               >
-                Do this first
-              </span>
-              {top.monthlyAmount && (
-                <span className="text-sm" style={{ ...NUM, color: C.muted }}>
-                  {inr(top.monthlyAmount)}/month
-                </span>
-              )}
+                {health.total}
+              </div>
             </div>
-            <h1
-              className="mt-3 text-2xl font-semibold sm:text-3xl"
-              style={{ letterSpacing: "-0.025em", lineHeight: 1.15, color: C.ink }}
-            >
-              {top.action}
-            </h1>
-            <p className="mt-3 max-w-2xl text-sm leading-relaxed" style={{ color: C.muted }}>
-              {top.reason}
-            </p>
-            <p className="mt-3 text-sm font-medium" style={{ color: C.sure }}>
-              {top.impact}
-            </p>
+            <div>
+              <div className="text-sm font-semibold" style={{ color: C.ink }}>
+                Financial Health
+              </div>
+              <div className="text-xs mt-0.5" style={{ color: healthColor, fontWeight: 600 }}>
+                {healthBand}
+              </div>
+              <div className="text-xs mt-1 leading-snug" style={{ color: C.muted }}>
+                {health.path[0]?.improvement || "Your finances are on track."}
+              </div>
+            </div>
           </div>
-        )}
+        </div>
+
+        {/* Monthly Cash Flow Card */}
+        <div
+          className="rounded-xl p-5 border"
+          style={{ background: C.card, borderColor: C.rule }}
+        >
+          <div className="text-sm font-semibold mb-3" style={{ color: C.ink }}>Monthly Cash Flow</div>
+          <div className="flex items-center gap-3 mb-3">
+            <div className="text-2xl font-bold" style={{ ...NUM, color: C.sure }}>
+              {inr(profile.income)}
+            </div>
+            <span className="text-xs" style={{ color: C.faint }}>income/month</span>
+          </div>
+          {/* Flow bar */}
+          {profile.income > 0 && (
+            <div>
+              <div className="flex h-3 w-full overflow-hidden rounded-full" style={{ background: C.rule }}>
+                {flowItems.map((f, i) => (
+                  <div
+                    key={f.label}
+                    className="h-full transition-all"
+                    style={{
+                      width: `${(f.value / profile.income) * 100}%`,
+                      background: f.color,
+                      borderRight: i < flowItems.length - 1 ? `1.5px solid ${C.card}` : "none",
+                    }}
+                    title={`${f.label}: ${inr(f.value)}`}
+                  />
+                ))}
+              </div>
+              <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2">
+                {flowItems.map((f) => (
+                  <span key={f.label} className="flex items-center gap-1 text-xs" style={{ color: C.muted }}>
+                    <span className="w-2 h-2 rounded-sm inline-block" style={{ background: f.color }} />
+                    {f.label}: <strong style={{ color: C.ink, ...NUM }}>{inrShort(f.value)}</strong>
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
+      {/* ── Row 2: Net Worth + Surplus ── */}
+      <div className="grid gap-4 sm:grid-cols-3">
+        <div className="rounded-xl p-4 text-center border" style={{ background: C.card, borderColor: C.rule }}>
+          <div className="text-xs" style={{ color: C.faint }}>Net Worth</div>
+          <div className="text-xl font-bold mt-1" style={{ ...NUM, color: profile.netWorth >= 0 ? C.sure : C.danger }}>
+            {inrShort(profile.netWorth)}
+          </div>
+        </div>
+        <div className="rounded-xl p-4 text-center border" style={{ background: C.card, borderColor: C.rule }}>
+          <div className="text-xs" style={{ color: C.faint }}>Monthly Surplus</div>
+          <div className="text-xl font-bold mt-1" style={{ ...NUM, color: profile.surplus >= 0 ? C.sure : C.danger }}>
+            {profile.surplus >= 0 ? "+" : ""}{inr(profile.surplus)}
+          </div>
+        </div>
+        <div className="rounded-xl p-4 text-center border" style={{ background: C.card, borderColor: C.rule }}>
+          <div className="text-xs" style={{ color: C.faint }}>Emergency Cover</div>
+          <div className="text-xl font-bold mt-1" style={{ ...NUM, color: profile.efMonths >= 3 ? C.sure : C.danger }}>
+            {profile.efMonths.toFixed(1)} months
+          </div>
+        </div>
+      </div>
+
+      {/* ── Row 3: Top Action ── */}
+      {top && (
+        <div
+          className="rounded-xl p-5 border"
+          style={{
+            background: top.priority === "critical" ? `${C.danger}08` : top.priority === "high" ? `${C.warn}08` : C.card,
+            borderColor: top.priority === "critical" ? `${C.danger}40` : top.priority === "high" ? `${C.warn}40` : C.rule,
+          }}
+        >
+          <div className="flex items-center gap-2 mb-2">
+            <span
+              className="rounded px-2 py-0.5 text-xs font-semibold"
+              style={{
+                background: top.priority === "critical" ? C.danger : top.priority === "high" ? C.warn : C.ink2,
+                color: "#fff",
+              }}
+            >
+              🎯 Top Priority
+            </span>
+            {top.monthlyAmount && (
+              <span className="text-xs" style={{ ...NUM, color: C.muted }}>
+                {inr(top.monthlyAmount)}/month
+              </span>
+            )}
+          </div>
+          <div className="text-lg font-semibold" style={{ color: C.ink, lineHeight: 1.3 }}>
+            {top.action}
+          </div>
+          <p className="mt-2 text-sm" style={{ color: C.muted }}>{top.reason}</p>
+          <p className="mt-2 text-sm font-medium" style={{ color: C.sure }}>↗ {top.impact}</p>
+        </div>
+      )}
+
+      {/* ── Row 4: Upcoming Payments ── */}
+      {payments.length > 0 && (
+        <div className="rounded-xl p-5 border" style={{ background: C.card, borderColor: C.rule }}>
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <div className="text-sm font-semibold" style={{ color: C.ink }}>📅 Upcoming Payments</div>
+              <div className="text-xs mt-0.5" style={{ color: C.muted }}>
+                {upcomingPayments.length} remaining this month · {inr(totalUpcoming)} due
+              </div>
+            </div>
+            <div className="text-right">
+              <div className="text-xs" style={{ color: C.faint }}>Month total</div>
+              <div className="text-sm font-bold" style={{ ...NUM, color: C.ink }}>{inr(totalMonth)}</div>
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            {upcomingPayments.map((p) => (
+              <div
+                key={p.id}
+                className="flex items-center gap-3 rounded-lg px-3 py-2.5"
+                style={{
+                  background: p.isToday ? `${C.warn}15` : C.paper,
+                  border: `1px solid ${p.isToday ? `${C.warn}40` : C.rule}`,
+                }}
+              >
+                <div
+                  className="flex items-center justify-center rounded-lg text-xs font-bold"
+                  style={{
+                    width: 38, height: 38, flexShrink: 0,
+                    background: p.type === "emi" ? `${C.danger}15` : p.type === "sip" ? `${C.model}15` : `${C.warn}15`,
+                    color: p.type === "emi" ? C.danger : p.type === "sip" ? C.model : C.warn,
+                  }}
+                >
+                  {p.day}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-medium truncate" style={{ color: C.ink }}>
+                    {p.emoji} {p.name}
+                  </div>
+                  <div className="text-xs" style={{ color: C.faint }}>
+                    {p.type === "emi" ? "EMI" : p.type === "sip" ? "SIP" : "Bill"}
+                    {p.isToday && <span style={{ color: C.warn, fontWeight: 600 }}> · Due Today</span>}
+                  </div>
+                </div>
+                <div className="text-sm font-bold" style={{ ...NUM, color: p.type === "emi" ? C.danger : p.type === "sip" ? C.model : C.ink }}>
+                  {inr(p.amount)}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {paidPayments.length > 0 && (
+            <div className="mt-3 pt-3 border-t" style={{ borderColor: C.rule }}>
+              <div className="text-xs font-medium mb-2" style={{ color: C.faint }}>✅ Already passed this month</div>
+              <div className="space-y-1">
+                {paidPayments.map((p) => (
+                  <div
+                    key={p.id}
+                    className="flex items-center gap-3 rounded-md px-3 py-1.5"
+                    style={{ opacity: 0.55 }}
+                  >
+                    <span className="text-xs font-semibold" style={{ ...NUM, color: C.faint, width: 22 }}>{p.day}</span>
+                    <span className="text-xs flex-1 truncate" style={{ color: C.muted }}>{p.emoji} {p.name}</span>
+                    <span className="text-xs font-medium" style={{ ...NUM, color: C.muted }}>{inr(p.amount)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Row 5: Alerts ── */}
       {alerts.length > 0 && (
         <div className="grid gap-2 sm:grid-cols-2">
           {alerts.slice(0, 4).map((a) => {
@@ -1425,29 +1640,6 @@ function DecideTab({ data, profile, health, recs, alerts, allocation }) {
           })}
         </div>
       )}
-
-      <Card>
-        <SectionTitle sub={allocation.headline}>
-          Your {inr(Math.max(0, profile.surplus))} surplus this month
-        </SectionTitle>
-        {profile.surplus > 0 ? (
-          <AllocationWaterfall allocation={allocation} />
-        ) : (
-          <p className="text-sm leading-relaxed" style={{ color: C.muted }}>
-            You currently have no uncommitted monthly surplus. Go to "Profile" to update your salary or reduce expenses.
-          </p>
-        )}
-      </Card>
-
-      <Card>
-        <SectionTitle sub="Got a bonus, tax refund or inheritance? Enter the amount to get an optimal one-time distribution.">
-          Lump sum / Windfall planner
-        </SectionTitle>
-        <div className="mb-5 max-w-xs">
-          <NumberField label="Windfall amount" value={windfall} onChange={setWindfall} min={10000} max={2000000} step={10000} />
-        </div>
-        <AllocationWaterfall allocation={windfallPlan} />
-      </Card>
     </div>
   );
 }
@@ -2081,6 +2273,7 @@ function InputsPanel({ data, setData, onClose }) {
       remainingTenureMonths: 12,
       prepaymentPenaltyPct: 0,
       taxDeductible: false,
+      paymentDay: 5,
     };
     setData((d) => ({ ...d, debts: [...(d.debts || []), newDebt] }));
   };
@@ -2109,6 +2302,7 @@ function InputsPanel({ data, setData, onClose }) {
       monthlyContribution: 2500,
       expectedAnnualReturnPct: 12,
       lockInMonths: 0,
+      paymentDay: 5,
     };
     setData((d) => ({ ...d, investments: [...(d.investments || []), newInv] }));
   };
@@ -2407,6 +2601,16 @@ function InputsPanel({ data, setData, onClose }) {
                       step={1}
                       prefix=" months"
                     />
+                    <NumberField
+                      label="EMI Payment Day (of month)"
+                      value={x.paymentDay || 0}
+                      onChange={(v) => updateDebt(x.id, "paymentDay", v)}
+                      min={0}
+                      max={31}
+                      step={1}
+                      prefix=""
+                      hint="Day of month when EMI is deducted (0 = not set)"
+                    />
                   </div>
                 </div>
               );
@@ -2455,6 +2659,16 @@ function InputsPanel({ data, setData, onClose }) {
                   <SelectField label="Asset Class" value={x.kind} onChange={(v) => updateInvestment(x.id, "kind", v)} options={INVESTMENT_KINDS} />
                   <NumberField label="Current Value" value={x.currentValue} onChange={(v) => updateInvestment(x.id, "currentValue", v)} min={0} max={20000000} step={5000} />
                   <NumberField label="Monthly SIP / Contribution" value={x.monthlyContribution} onChange={(v) => updateInvestment(x.id, "monthlyContribution", v)} min={0} max={500000} step={500} />
+                  <NumberField
+                    label="SIP Deduction Day (of month)"
+                    value={x.paymentDay || 0}
+                    onChange={(v) => updateInvestment(x.id, "paymentDay", v)}
+                    min={0}
+                    max={31}
+                    step={1}
+                    prefix=""
+                    hint="Day of month when SIP is deducted (0 = not set)"
+                  />
                 </div>
               </div>
             ))}
@@ -2502,6 +2716,88 @@ function InputsPanel({ data, setData, onClose }) {
                   <SelectField label="Goal Category" value={x.kind} onChange={(v) => updateGoal(x.id, "kind", v)} options={GOAL_KINDS} />
                   <NumberField label="Target Amount" value={x.targetAmount} onChange={(v) => updateGoal(x.id, "targetAmount", v)} min={10000} max={50000000} step={10000} />
                   <NumberField label="Currently Saved" value={x.currentAmount} onChange={(v) => updateGoal(x.id, "currentAmount", v)} min={0} max={x.targetAmount} step={5000} />
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
+
+      {/* 8. Recurring Bills */}
+      <Card>
+        <SectionTitle
+          sub="Track your monthly recurring bills like rent, electricity, subscriptions, and more."
+          action={
+            <button
+              onClick={() => {
+                const newBill = {
+                  id: "b_" + Date.now(),
+                  name: "New Bill",
+                  amount: 500,
+                  paymentDay: 1,
+                  category: "utilities",
+                };
+                setData((d) => ({ ...d, bills: [...(d.bills || []), newBill] }));
+              }}
+              className="rounded-lg px-3 py-1.5 text-xs font-semibold text-white shadow-sm"
+              style={{ background: C.warn }}
+            >
+              + Add Bill
+            </button>
+          }
+        >
+          📄 Recurring Bills ({(data.bills || []).length})
+        </SectionTitle>
+
+        {(data.bills || []).length === 0 ? (
+          <div className="rounded-lg border border-dashed p-6 text-center" style={{ borderColor: C.rule }}>
+            <p className="text-sm font-medium" style={{ color: C.ink }}>No recurring bills added yet.</p>
+            <p className="mt-1 text-xs" style={{ color: C.muted }}>Click "+ Add Bill" to track your monthly bills and see them on the Decide page.</p>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {(data.bills || []).map((b, idx) => (
+              <div key={b.id} className="rounded-xl border p-4" style={{ borderColor: C.rule, background: C.paper }}>
+                <div className="mb-3 flex items-center justify-between">
+                  <span className="font-semibold text-sm" style={{ color: C.ink }}>#{idx + 1} {b.name}</span>
+                  <button
+                    onClick={() => setData((d) => ({ ...d, bills: (d.bills || []).filter((x) => x.id !== b.id) }))}
+                    className="rounded px-2 py-1 text-xs font-medium text-red-500 hover:bg-red-900/20"
+                  >
+                    🗑️ Remove
+                  </button>
+                </div>
+                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                  <TextField
+                    label="Bill Name"
+                    value={b.name}
+                    onChange={(v) => setData((d) => ({ ...d, bills: (d.bills || []).map((x) => x.id === b.id ? { ...x, name: v } : x) }))}
+                    placeholder="e.g. Electricity"
+                  />
+                  <SelectField
+                    label="Category"
+                    value={b.category}
+                    onChange={(v) => setData((d) => ({ ...d, bills: (d.bills || []).map((x) => x.id === b.id ? { ...x, category: v } : x) }))}
+                    options={BILL_CATEGORIES}
+                  />
+                  <NumberField
+                    label="Amount"
+                    value={b.amount}
+                    onChange={(v) => setData((d) => ({ ...d, bills: (d.bills || []).map((x) => x.id === b.id ? { ...x, amount: v } : x) }))}
+                    min={0}
+                    max={200000}
+                    step={100}
+                  />
+                  <NumberField
+                    label="Payment Day (of month)"
+                    value={b.paymentDay}
+                    onChange={(v) => setData((d) => ({ ...d, bills: (d.bills || []).map((x) => x.id === b.id ? { ...x, paymentDay: v } : x) }))}
+                    min={1}
+                    max={31}
+                    step={1}
+                    prefix=""
+                    hint="Day of month when bill is due"
+                  />
                 </div>
               </div>
             ))}
