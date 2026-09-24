@@ -393,7 +393,7 @@ function MonthlyReport({ data, profile, dailyLogs, categories, C }) {
 }
 
 /* ─── Balance Sheet Component ────────────────────────────────────── */
-function BalanceSheetView({ data, profile, C }) {
+function BalanceSheetView({ data, profile, portfolio, C }) {
   const d = data;
   const s = d.savings || {};
   const investments = d.investments || [];
@@ -581,6 +581,89 @@ function BalanceSheetView({ data, profile, C }) {
         </div>
       </div>
 
+      {/* Portfolio Mix & Asset Allocation */}
+      {portfolio && (
+        <div className="rounded-2xl p-5" style={{ background: C.card, border: `1.5px solid ${C.rule}` }}>
+          <SectionHeader
+            icon="🥧"
+            title="Portfolio Mix & Asset Allocation"
+            subtitle="Breakdown of your invested wealth across asset classes"
+            C={C}
+          />
+          <div className="grid gap-3 sm:grid-cols-3 mb-4">
+            <Tile
+              label="Equity Share"
+              value={pct(portfolio.equityPct)}
+              icon="📈"
+              color="#3B82F6"
+              sub={`Suggested: ~${portfolio.suggested}% for age ${data.personal?.age || 28}`}
+              C={C}
+            />
+            <Tile
+              label="Gold / Digital Gold"
+              value={pct(portfolio.goldPct)}
+              icon="🪙"
+              color="#EAB308"
+              sub="Hedge against inflation"
+              C={C}
+            />
+            <Tile
+              label="Illiquid Assets (EPF / PPF)"
+              value={pct(portfolio.illiquidPct)}
+              icon="🔒"
+              color="#A855F7"
+              sub="Retirement lock-in assets"
+              C={C}
+            />
+          </div>
+
+          {portfolio.total > 0 && (
+            <div className="mb-4">
+              <div className="flex items-center justify-between text-xs mb-1.5 font-medium" style={{ color: C.muted }}>
+                <span>Asset Allocation</span>
+                <span style={NUM}>Total Invested: {inr(portfolio.total)}</span>
+              </div>
+              <div className="h-3 w-full rounded-full overflow-hidden flex" style={{ background: C.rule }}>
+                {portfolio.equityPct > 0 && (
+                  <div style={{ width: `${portfolio.equityPct}%`, background: "#3B82F6" }} title={`Equity: ${pct(portfolio.equityPct)}`} />
+                )}
+                {portfolio.goldPct > 0 && (
+                  <div style={{ width: `${portfolio.goldPct}%`, background: "#EAB308" }} title={`Gold: ${pct(portfolio.goldPct)}`} />
+                )}
+                {portfolio.illiquidPct > 0 && (
+                  <div style={{ width: `${portfolio.illiquidPct}%`, background: "#A855F7" }} title={`Illiquid: ${pct(portfolio.illiquidPct)}`} />
+                )}
+                {Math.max(0, 100 - portfolio.equityPct - portfolio.goldPct - portfolio.illiquidPct) > 0 && (
+                  <div style={{ width: `${Math.max(0, 100 - portfolio.equityPct - portfolio.goldPct - portfolio.illiquidPct)}%`, background: "#10B981" }} title="Fixed Income / Other" />
+                )}
+              </div>
+              <div className="flex flex-wrap items-center gap-4 mt-2 text-xs" style={{ color: C.muted }}>
+                <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm inline-block" style={{ background: "#3B82F6" }} /> Equity ({pct(portfolio.equityPct)})</span>
+                <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm inline-block" style={{ background: "#EAB308" }} /> Gold ({pct(portfolio.goldPct)})</span>
+                <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm inline-block" style={{ background: "#A855F7" }} /> Illiquid ({pct(portfolio.illiquidPct)})</span>
+                {Math.max(0, 100 - portfolio.equityPct - portfolio.goldPct - portfolio.illiquidPct) > 0.5 && (
+                  <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm inline-block" style={{ background: "#10B981" }} /> Debt/Other ({pct(Math.max(0, 100 - portfolio.equityPct - portfolio.goldPct - portfolio.illiquidPct))})</span>
+                )}
+              </div>
+            </div>
+          )}
+
+          {portfolio.notes && portfolio.notes.length > 0 && (
+            <div className="rounded-xl p-3 text-xs leading-relaxed border" style={{ background: C.paper, borderColor: C.rule, color: C.ink }}>
+              <div className="font-semibold mb-1" style={{ color: C.muted }}>💡 Portfolio Insights & Recommendations:</div>
+              <div className="space-y-1" style={{ color: C.muted }}>
+                {portfolio.notes.map((n, i) => (
+                  <div key={i} className="flex items-start gap-1.5">
+                    <span className="opacity-60">•</span>
+                    <span>{n}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Goal progress */}
       {(data.goals || []).length > 0 && (
         <div className="rounded-2xl p-5" style={{ background: C.card, border: `1.5px solid ${C.rule}` }}>
@@ -622,11 +705,11 @@ function BalanceSheetView({ data, profile, C }) {
 
 /* ─── Main Export ─────────────────────────────────────────────────── */
 const VIEWS = [
-  { id: "balance", label: "Balance Sheet" },
+  { id: "balance", label: "Net Worth & Balance Sheet" },
   { id: "report", label: "Monthly Report" },
 ];
 
-export default function BalanceSheetTab({ data, profile, dailyLogs, categories }) {
+export default function BalanceSheetTab({ data, profile, dailyLogs, categories, portfolio }) {
   const C = useContext(ThemeContext);
   const [view, setView] = useState("balance");
   const monthLabel = getMonthLabel(0);
@@ -637,7 +720,7 @@ export default function BalanceSheetTab({ data, profile, dailyLogs, categories }
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <h1 className="text-xl font-black" style={{ color: C.ink }}>
-            📋 Personal Finance Report
+            📋 Net Worth & Financial Report
           </h1>
           <p className="text-sm mt-0.5" style={{ color: C.muted }}>
             {monthLabel} · {data.personal?.name || "Your"} financial snapshot
@@ -657,7 +740,7 @@ export default function BalanceSheetTab({ data, profile, dailyLogs, categories }
         </div>
       </div>
 
-      {view === "balance" && <BalanceSheetView data={data} profile={profile} C={C} />}
+      {view === "balance" && <BalanceSheetView data={data} profile={profile} portfolio={portfolio} C={C} />}
       {view === "report" && <MonthlyReport data={data} profile={profile} dailyLogs={dailyLogs} categories={categories} C={C} />}
     </div>
   );

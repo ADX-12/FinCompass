@@ -1811,38 +1811,6 @@ function HealthTab({ health, profile }) {
   );
 }
 
-function NetWorthTab({ data, profile, portfolio }) {
-  const C = useTheme();
-  return (
-    <div className="space-y-6">
-      <Card>
-        <SectionTitle sub="Total Assets minus Total Liabilities based on your entered data">
-          Net Worth Breakdown
-        </SectionTitle>
-        <div className="grid gap-4 sm:grid-cols-3">
-          <Stat label="Total Assets" value={inrShort(profile.totalAssets)} tone={C.sure} hint={inr(profile.totalAssets)} />
-          <Stat label="Total Liabilities / Debt" value={inrShort(profile.totalLiabilities)} tone={C.danger} hint={inr(profile.totalLiabilities)} />
-          <Stat label="Net Worth" value={inrShort(profile.netWorth)} tone={profile.netWorth >= 0 ? C.sure : C.danger} hint={inr(profile.netWorth)} />
-        </div>
-      </Card>
-
-      <Card>
-        <SectionTitle sub="Asset Allocation Analysis">Portfolio Mix</SectionTitle>
-        <div className="grid gap-4 sm:grid-cols-3">
-          <Stat label="Equity Share" value={pct(portfolio.equityPct)} tone={C.model} hint={`Suggested: ~${portfolio.suggested}% for age ${data.personal?.age}`} />
-          <Stat label="Gold / Digital Gold" value={pct(portfolio.goldPct)} />
-          <Stat label="Illiquid Assets (EPF/PPF)" value={pct(portfolio.illiquidPct)} />
-        </div>
-        {portfolio.notes.length > 0 && (
-          <div className="mt-4 rounded-lg p-3 text-xs leading-relaxed border" style={{ background: C.paper, borderColor: C.rule, color: C.ink2 }}>
-            {portfolio.notes.join(" · ")}
-          </div>
-        )}
-      </Card>
-    </div>
-  );
-}
-
 function GoalsTab({ data, profile }) {
   const C = useTheme();
   const goals = (data.goals || []).map((g) => {
@@ -2971,7 +2939,6 @@ const TABS = [
   { id: "report", label: "📋 Report" },
   { id: "banks", label: "Banks & Cash" },
   { id: "health", label: "Health" },
-  { id: "networth", label: "Net worth" },
   { id: "goals", label: "Goals" },
   { id: "debt", label: "Debt vs invest" },
   { id: "grow", label: "Grow" },
@@ -3610,6 +3577,7 @@ function FinCompassApp() {
               profile={profile}
               dailyLogs={dailyLogs}
               categories={categories}
+              portfolio={portfolio}
             />
           )}
           {tab === "banks" && (
@@ -3621,7 +3589,6 @@ function FinCompassApp() {
             />
           )}
           {tab === "health" && <HealthTab health={health} profile={profile} />}
-          {tab === "networth" && <NetWorthTab data={data} profile={profile} portfolio={portfolio} />}
           {tab === "goals" && <GoalsTab data={data} profile={profile} />}
           {tab === "debt" && <DebtVsInvestTab data={data} profile={profile} />}
           {tab === "grow" && <GrowTab data={data} profile={profile} />}
