@@ -3035,6 +3035,8 @@ function FinCompassApp() {
   const [syncStatus, setSyncStatus] = useState("idle"); // idle | syncing | synced | offline
   const [tab, setTab] = useState("decide");
   const saveTimerRef = useRef(null);
+  // Prevents Firestore save from firing while we are loading data from Firestore
+  const isLoadingData = useRef(false);
 
   // ── Auth state ──────────────────────────────────────────────────
   const [authUser, setAuthUser] = useState(() => (auth ? auth.currentUser : null));
@@ -3046,10 +3048,12 @@ function FinCompassApp() {
       return;
     }
     setSyncStatus("syncing");
+    // Block saves while loading so we don't overwrite cloud data with local state
+    isLoadingData.current = true;
     Promise.all([loadUserData(), loadBanks(), loadDailyLogs()])
       .then(([userData, banksData, logsData]) => {
         if (userData) {
-          setData((prev) => ({
+          setData({
             ...BLANK_TEMPLATE,
             ...userData,
             personal: {
@@ -3060,7 +3064,7 @@ function FinCompassApp() {
             },
             cashFlow: { ...BLANK_TEMPLATE.cashFlow, ...userData.cashFlow },
             savings: { ...BLANK_TEMPLATE.savings, ...userData.savings },
-          }));
+          });
         } else {
           // First time sign-in: all numbers zeroed, name and email from auth
           const freshData = {
@@ -3091,6 +3095,10 @@ function FinCompassApp() {
       .catch((e) => {
         console.warn("Firestore load error:", e);
         setSyncStatus("offline");
+      })
+      .finally(() => {
+        // Allow saves again after load completes (success or failure)
+        isLoadingData.current = false;
       });
   }, []);
 
@@ -3356,10 +3364,12 @@ function FinCompassApp() {
     } catch (e) {
       console.error("Failed to save state:", e);
     }
-    // Debounced Firestore save
-    if (FIREBASE_CONFIGURED) {
+    // Debounced Firestore save — skip while loading data from Firestore to
+    // avoid overwriting cloud data with a stale local/blank state
+    if (FIREBASE_CONFIGURED && !isLoadingData.current) {
       clearTimeout(saveTimerRef.current);
       saveTimerRef.current = setTimeout(() => {
+        if (isLoadingData.current) return; // double-check at fire time
         setSyncStatus("syncing");
         saveUserData(data).then(() => setSyncStatus("synced")).catch(() => setSyncStatus("offline"));
       }, 800);
