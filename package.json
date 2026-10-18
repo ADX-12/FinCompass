@@ -4,9 +4,9 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "NODE_OPTIONS=\"--dns-result-order=ipv4first\" vite",
     "build": "vite build && mkdir -p docs && cp -r dist/* docs/ && touch docs/.nojekyll",
-    "preview": "vite preview"
+    "preview": "NODE_OPTIONS=\"--dns-result-order=ipv4first\" vite preview"
   },
   "dependencies": {
     "firebase": "^12.19.0",

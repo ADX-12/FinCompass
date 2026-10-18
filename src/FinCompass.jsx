@@ -3,6 +3,8 @@ import BanksTab from "./BanksTab";
 import DailyTrackerTab, { DEFAULT_CATEGORIES } from "./DailyTracker";
 import SpendingAnalysisTab from "./SpendingAnalysis";
 import BalanceSheetTab from "./BalanceSheet";
+import ProjectionsTab from "./ProjectionsTab";
+import InvoicesTab from "./InvoicesTab";
 import AuthPage from "./AuthPage";
 import logoImg from "./assets/logo.png";
 import { ThemeContext } from "./FinCompassContext";
@@ -1008,12 +1010,33 @@ const DEMO = {
     { id: "g2", name: "Bike Upgrade", kind: "car", targetAmount: 180000, currentAmount: 25000, targetDate: monthsFromNow(24), monthlyContribution: 2000, expectedAnnualReturnPct: 7, priority: "nice_to_have" },
     { id: "g3", name: "Higher Studies Fund", kind: "education", targetAmount: 1500000, currentAmount: 40000, targetDate: monthsFromNow(60), monthlyContribution: 4000, expectedAnnualReturnPct: 11, priority: "should_have" },
   ],
+  creditCards: [
+    { id: "cc_1", name: "HDFC Regalia Gold", bank: "HDFC Bank", last4: "8492", totalLimit: 200000, currentOutstanding: 22000, billDay: 15, dueDays: 20, interestRatePct: 42, colorTheme: "navy" },
+    { id: "cc_2", name: "ICICI Amazon Pay", bank: "ICICI Bank", last4: "3104", totalLimit: 150000, currentOutstanding: 8500, billDay: 22, dueDays: 18, interestRatePct: 38, colorTheme: "amber" },
+  ],
+  projectedIncomes: [
+    { id: "proj_1", source: "Diwali Performance Bonus", amount: 65000, projectedDate: "2026-11-05", category: "bonus", notes: "Expected semi-annual company bonus", status: "pending" },
+    { id: "proj_2", source: "Freelance Consulting Payout", amount: 35000, projectedDate: "2026-10-28", category: "freelance", notes: "Milestone 2 deliverable signoff", status: "pending" },
+    { id: "proj_3", source: "Fixed Deposit Interest Credit", amount: 14200, projectedDate: "2026-11-20", category: "investment", notes: "SBI 1-year FD maturity payout", status: "pending" },
+  ],
+  invoices: [],
   assumptions: {
     inflationPct: 6, equityReturnPct: 12, savingsAccountReturnPct: 3.5,
     marginalTaxRatePct: 20, ltcgRatePct: 12.5, retirementAge: 60, safeWithdrawalRatePct: 3.5,
   },
   history: buildHistory(),
 };
+
+export const DEFAULT_CREDIT_CARDS = [
+  { id: "cc_1", name: "HDFC Regalia Gold", bank: "HDFC Bank", last4: "8492", totalLimit: 200000, currentOutstanding: 22000, billDay: 15, dueDays: 20, interestRatePct: 42, colorTheme: "navy" },
+  { id: "cc_2", name: "ICICI Amazon Pay", bank: "ICICI Bank", last4: "3104", totalLimit: 150000, currentOutstanding: 8500, billDay: 22, dueDays: 18, interestRatePct: 38, colorTheme: "amber" },
+];
+
+export const DEFAULT_PROJECTED_INCOMES = [
+  { id: "proj_1", source: "Diwali Performance Bonus", amount: 65000, projectedDate: "2026-11-05", category: "bonus", notes: "Expected semi-annual company bonus", status: "pending" },
+  { id: "proj_2", source: "Freelance Consulting Payout", amount: 35000, projectedDate: "2026-10-28", category: "freelance", notes: "Milestone 2 deliverable signoff", status: "pending" },
+  { id: "proj_3", source: "Fixed Deposit Interest Credit", amount: 14200, projectedDate: "2026-11-20", category: "investment", notes: "SBI 1-year FD maturity payout", status: "pending" },
+];
 
 const BLANK_TEMPLATE = {
   personal: {
@@ -1058,6 +1081,9 @@ const BLANK_TEMPLATE = {
   bills: [],
   assets: [],
   goals: [],
+  creditCards: [],
+  projectedIncomes: [],
+  invoices: [],
   assumptions: {
     inflationPct: 6,
     equityReturnPct: 12,
@@ -1712,6 +1738,45 @@ function DecideTab({ data, profile, health, recs, alerts, dailyLogs }) {
         </div>
       )}
 
+      {/* ── Row 4.5: Projected Inflows ── */}
+      {(data.projectedIncomes || []).filter((p) => p.status !== "received").length > 0 && (
+        <div className="rounded-xl p-5 border" style={{ background: C.card, borderColor: C.rule }}>
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <span className="text-lg">🔮</span>
+              <div>
+                <h3 className="font-semibold text-sm" style={{ color: C.ink }}>Upcoming Projected Money</h3>
+                <p className="text-xs" style={{ color: C.muted }}>Expected incoming sources before they arrive</p>
+              </div>
+            </div>
+            <span className="text-sm font-extrabold text-emerald-500" style={NUM}>
+              +{inr((data.projectedIncomes || []).filter((p) => p.status !== "received").reduce((s, p) => s + (Number(p.amount) || 0), 0))}
+            </span>
+          </div>
+
+          <div className="grid gap-2 sm:grid-cols-2">
+            {(data.projectedIncomes || [])
+              .filter((p) => p.status !== "received")
+              .slice(0, 4)
+              .map((p) => (
+                <div
+                  key={p.id}
+                  className="flex items-center justify-between p-3 rounded-lg border text-xs"
+                  style={{ background: C.paper, borderColor: C.rule }}
+                >
+                  <div className="min-w-0 pr-2">
+                    <div className="font-semibold truncate" style={{ color: C.ink }}>{p.source}</div>
+                    <div className="text-[11px]" style={{ color: C.faint }}>📅 Expected: {p.projectedDate}</div>
+                  </div>
+                  <div className="text-right flex-shrink-0">
+                    <span className="font-bold text-sm text-emerald-500" style={NUM}>+{inr(p.amount)}</span>
+                  </div>
+                </div>
+              ))}
+          </div>
+        </div>
+      )}
+
       {/* ── Row 5: Alerts ── */}
       {alerts.length > 0 && (
         <div className="grid gap-2 sm:grid-cols-2">
@@ -1811,45 +1876,206 @@ function HealthTab({ health, profile }) {
   );
 }
 
-function GoalsTab({ data, profile }) {
+function GoalsTab({ data, profile, dailyLogs, onContributeGoal }) {
   const C = useTheme();
+  const [activeGoalTxs, setActiveGoalTxs] = useState(null);
+  const [quickAmount, setQuickAmount] = useState("200");
+  const [quickGoalId, setQuickGoalId] = useState(null);
+
   const goals = (data.goals || []).map((g) => {
     const monthsLeft = 24;
     const req = requiredMonthly(g.targetAmount, g.currentAmount, g.expectedAnnualReturnPct || 10, monthsLeft);
+
+    // Collect all transactions linked to this goal
+    const linkedTxs = [];
+    Object.keys(dailyLogs || {}).forEach((dateStr) => {
+      (dailyLogs[dateStr]?.entries || []).forEach((e) => {
+        if (e.goalId === g.id) {
+          linkedTxs.push({ ...e, dateStr });
+        }
+      });
+    });
+
     return {
       ...g,
       monthsRemaining: monthsLeft,
       requiredMonthly: Math.round(req),
       progressPct: g.targetAmount > 0 ? (g.currentAmount / g.targetAmount) * 100 : 0,
+      linkedTxs: linkedTxs.sort((a, b) => (b.dateStr || "").localeCompare(a.dateStr || "")),
     };
   });
 
   return (
     <div className="space-y-6">
       <Card>
-        <SectionTitle sub="Track your active financial targets">Financial Goals</SectionTitle>
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+          <div>
+            <SectionTitle sub="Track your active financial targets with bi-directional transaction syncing">
+              🎯 Financial Goals
+            </SectionTitle>
+          </div>
+        </div>
+
         {goals.length === 0 ? (
           <p className="text-sm" style={{ color: C.muted }}>No goals added yet. Go to "Profile" to add goals.</p>
         ) : (
-          <div className="space-y-4">
-            {goals.map((g) => (
-              <div key={g.id} className="rounded-lg border p-4" style={{ borderColor: C.rule, background: C.paper }}>
-                <div className="flex items-center justify-between">
-                  <span className="font-semibold text-sm" style={{ color: C.ink }}>{g.name}</span>
-                  <span className="text-xs font-semibold" style={{ ...NUM, color: C.sure }}>
-                    {inr(g.currentAmount)} / {inr(g.targetAmount)}
-                  </span>
+          <div className="space-y-5">
+            {goals.map((g) => {
+              const showTxs = activeGoalTxs === g.id;
+              const isContributing = quickGoalId === g.id;
+
+              return (
+                <div key={g.id} className="rounded-xl border p-5 transition-all" style={{ borderColor: C.rule, background: C.paper }}>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <span className="font-bold text-base" style={{ color: C.ink }}>{g.name}</span>
+                      <span className="ml-2 text-xs font-semibold px-2 py-0.5 rounded-full" style={{ background: `${C.sure}18`, color: C.sure }}>
+                        {g.progressPct.toFixed(0)}% funded
+                      </span>
+                    </div>
+                    <span className="text-sm font-extrabold" style={{ ...NUM, color: C.sure }}>
+                      {inr(g.currentAmount)} / {inr(g.targetAmount)}
+                    </span>
+                  </div>
+
+                  <div className="mt-2.5">
+                    <Meter value={g.currentAmount} max={g.targetAmount} color={C.sure} height={8} />
+                  </div>
+
+                  <div className="mt-3.5 grid grid-cols-2 gap-2 text-xs sm:grid-cols-3" style={{ color: C.muted }}>
+                    <div>Pace: <span className="font-semibold" style={{ color: C.ink }}>{inr(g.monthlyContribution)}/m</span></div>
+                    <div>Required Pace: <span className="font-semibold" style={{ color: C.model }}>{inr(g.requiredMonthly)}/m</span></div>
+                    <div>Assumed Return: <span className="font-semibold" style={{ color: C.ink }}>{g.expectedAnnualReturnPct}%</span></div>
+                  </div>
+
+                  {/* Actions & Bi-Directional Stats */}
+                  <div className="mt-4 pt-3 border-t flex flex-wrap items-center justify-between gap-3" style={{ borderColor: C.rule }}>
+                    <button
+                      onClick={() => setActiveGoalTxs(showTxs ? null : g.id)}
+                      className="text-xs font-semibold flex items-center gap-1.5 transition-colors hover:underline"
+                      style={{ color: C.ink }}
+                    >
+                      <span>📜</span>
+                      <span>
+                        {showTxs ? "Hide" : "View"} Linked Transactions ({g.linkedTxs.length})
+                      </span>
+                    </button>
+
+                    <button
+                      onClick={() => setQuickGoalId(isContributing ? null : g.id)}
+                      className="px-3 py-1.5 rounded-lg text-xs font-bold text-white shadow-sm transition-opacity hover:opacity-90"
+                      style={{ background: "#10B981" }}
+                    >
+                      {isContributing ? "✕ Cancel" : "+ Save / Contribute"}
+                    </button>
+                  </div>
+
+                  {/* Quick Contribution Box */}
+                  {isContributing && (
+                    <div
+                      className="mt-3 p-3 rounded-xl border flex flex-wrap items-center justify-between gap-2 text-xs"
+                      style={{ background: C.card, borderColor: C.rule }}
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className="font-semibold" style={{ color: C.ink }}>Quick Save Amount:</span>
+                        {["200", "500", "1000", "2000"].map((preset) => (
+                          <button
+                            key={preset}
+                            type="button"
+                            onClick={() => setQuickAmount(preset)}
+                            className="px-2 py-1 rounded-md border font-semibold"
+                            style={{
+                              background: quickAmount === preset ? C.ink : C.paper,
+                              color: quickAmount === preset ? C.paper : C.ink,
+                              borderColor: C.rule,
+                            }}
+                          >
+                            ₹{preset}
+                          </button>
+                        ))}
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <div className="relative">
+                          <span className="absolute left-2.5 top-1/2 -translate-y-1/2 font-bold text-emerald-500">₹</span>
+                          <input
+                            type="number"
+                            min="1"
+                            value={quickAmount}
+                            onChange={(e) => setQuickAmount(e.target.value)}
+                            className="w-24 pl-6 pr-2 py-1 rounded-lg border font-bold text-emerald-500 text-xs focus:outline-none"
+                            style={{ borderColor: C.rule, background: C.paper }}
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const amt = parseFloat(quickAmount);
+                            if (amt > 0 && onContributeGoal) {
+                              onContributeGoal(g.id, amt);
+                              setQuickGoalId(null);
+                            }
+                          }}
+                          className="px-3 py-1 rounded-lg font-bold text-white shadow-sm"
+                          style={{ background: "#10B981" }}
+                        >
+                          Confirm Save
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Linked Transactions Table */}
+                  {showTxs && (
+                    <div className="mt-3 rounded-xl border overflow-hidden" style={{ borderColor: C.rule }}>
+                      <table className="w-full text-left text-xs border-collapse">
+                        <thead>
+                          <tr style={{ background: C.card, borderBottom: `1px solid ${C.rule}` }}>
+                            <th className="py-2 px-3 font-semibold" style={{ color: C.muted }}>Date</th>
+                            <th className="py-2 px-3 font-semibold" style={{ color: C.muted }}>Description</th>
+                            <th className="py-2 px-3 font-semibold" style={{ color: C.muted }}>Type</th>
+                            <th className="py-2 px-3 text-right font-semibold" style={{ color: C.muted }}>Contribution</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y" style={{ borderColor: C.rule }}>
+                          {g.linkedTxs.length === 0 ? (
+                            <tr>
+                              <td colSpan="4" className="py-4 text-center" style={{ color: C.muted }}>
+                                No transactions linked to this goal yet.
+                                <div className="text-[11px] mt-0.5" style={{ color: C.faint }}>
+                                  In Daily Transactions, select "Link to Savings Goal" to calculate progress live.
+                                </div>
+                              </td>
+                            </tr>
+                          ) : (
+                            g.linkedTxs.map((tx) => (
+                              <tr key={tx.id} style={{ background: C.card }}>
+                                <td className="py-2 px-3 font-mono text-[11px]" style={{ color: C.muted }}>{tx.dateStr}</td>
+                                <td className="py-2 px-3 font-medium" style={{ color: C.ink }}>{tx.note || "Goal Contribution"}</td>
+                                <td className="py-2 px-3">
+                                  <span
+                                    className="px-1.5 py-0.5 rounded text-[10px] font-bold"
+                                    style={{
+                                      background: tx.type === "credit" ? "#EF444415" : "#10B98115",
+                                      color: tx.type === "credit" ? "#EF4444" : "#10B981",
+                                    }}
+                                  >
+                                    {tx.type === "credit" ? "Withdrawal (-)" : "Saved (+)"}
+                                  </span>
+                                </td>
+                                <td className="py-2 px-3 text-right font-bold" style={{ ...NUM, color: tx.type === "credit" ? "#EF4444" : "#10B981" }}>
+                                  {tx.type === "credit" ? "-" : "+"}{inr(tx.amount)}
+                                </td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
                 </div>
-                <div className="mt-2">
-                  <Meter value={g.currentAmount} max={g.targetAmount} color={C.sure} height={6} />
-                </div>
-                <div className="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-3" style={{ color: C.muted }}>
-                  <div>Contributing: <span className="font-semibold" style={{ color: C.ink }}>{inr(g.monthlyContribution)}/m</span></div>
-                  <div>Required Pace: <span className="font-semibold" style={{ color: C.model }}>{inr(g.requiredMonthly)}/m</span></div>
-                  <div>Assumed Return: <span className="font-semibold" style={{ color: C.ink }}>{g.expectedAnnualReturnPct}%</span></div>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </Card>
@@ -2935,9 +3161,11 @@ class ErrorBoundary extends React.Component {
 const TABS = [
   { id: "decide", label: "Decide" },
   { id: "daily", label: "Transactions" },
+  { id: "projections", label: "🔮 Projections" },
+  { id: "invoices", label: "🧾 Invoices" },
   { id: "analysis", label: "Analysis" },
   { id: "report", label: "📋 Report" },
-  { id: "banks", label: "Banks & Cash" },
+  { id: "banks", label: "Banks & Cards" },
   { id: "health", label: "Health" },
   { id: "goals", label: "Goals" },
   { id: "debt", label: "Debt vs invest" },
@@ -2966,12 +3194,20 @@ function FinCompassApp() {
           personal: { ...BLANK_TEMPLATE.personal, ...parsed.personal },
           cashFlow: { ...BLANK_TEMPLATE.cashFlow, ...parsed.cashFlow },
           savings: { ...BLANK_TEMPLATE.savings, ...parsed.savings },
+          creditCards: parsed.creditCards || DEFAULT_CREDIT_CARDS,
+          projectedIncomes: parsed.projectedIncomes || DEFAULT_PROJECTED_INCOMES,
+          invoices: parsed.invoices || [],
         };
       }
     } catch (e) {
       console.error("Failed to load saved state:", e);
     }
-    return BLANK_TEMPLATE;
+    return {
+      ...BLANK_TEMPLATE,
+      creditCards: DEFAULT_CREDIT_CARDS,
+      projectedIncomes: DEFAULT_PROJECTED_INCOMES,
+      invoices: [],
+    };
   });
 
   // ── Banks & Cash state ──────────────────────────────────────────
@@ -3064,6 +3300,9 @@ function FinCompassApp() {
             },
             cashFlow: { ...BLANK_TEMPLATE.cashFlow, ...userData.cashFlow },
             savings: { ...BLANK_TEMPLATE.savings, ...userData.savings },
+            creditCards: userData.creditCards || DEFAULT_CREDIT_CARDS,
+            projectedIncomes: userData.projectedIncomes || DEFAULT_PROJECTED_INCOMES,
+            invoices: userData.invoices || [],
           });
         } else {
           // First time sign-in: all numbers zeroed, name and email from auth
@@ -3105,6 +3344,17 @@ function FinCompassApp() {
   // ── Auth state listener & data load ─────────────────────────────
   useEffect(() => {
     if (!FIREBASE_CONFIGURED || !auth) {
+      setAuthLoading(false);
+      return;
+    }
+    const skipped = typeof window !== "undefined" && localStorage.getItem("fincompass_skipped_auth") === "true";
+    if (skipped) {
+      setAuthUser({
+        uid: "guest_local",
+        displayName: "Guest User",
+        email: "guest@fincompass.local",
+        isGuest: true,
+      });
       setAuthLoading(false);
       return;
     }
@@ -3163,6 +3413,14 @@ function FinCompassApp() {
       try { localStorage.setItem("fincompass_cash_v1", String(numVal)); } catch {}
       saveBanks(banksRef.current, numVal).catch(() => {});
       return numVal;
+    });
+  }, []);
+
+  const setDailyLogs = useCallback((updater) => {
+    setDailyLogsRaw((prev) => {
+      const next = typeof updater === "function" ? updater(prev) : updater;
+      try { localStorage.setItem("fincompass_daily_logs_v1", JSON.stringify(next)); } catch {}
+      return next;
     });
   }, []);
 
@@ -3257,6 +3515,69 @@ function FinCompassApp() {
       }
     }
 
+    // Live calculation for Credit Card (Debit adds to spent balance; Credit pays/reduces spent balance)
+    const cardId = entry.creditCardId || entry.accountId;
+    if (cardId) {
+      setData((prev) => {
+        const cards = prev.creditCards || [];
+        if (!cards.some((c) => c.id === cardId)) return prev;
+        return {
+          ...prev,
+          creditCards: cards.map((c) => {
+            if (c.id === cardId) {
+              const curOut = Number(c.currentOutstanding) || 0;
+              const newOut = entry.type === "debit"
+                ? curOut + entry.amount
+                : Math.max(0, curOut - entry.amount);
+              return { ...c, currentOutstanding: newOut };
+            }
+            return c;
+          }),
+        };
+      });
+    }
+
+    // Bi-directional live sync for Financial Goals:
+    // Debit from account = saving money into the goal (increases currentAmount)
+    // Credit to account = withdrawing from the goal (decreases currentAmount)
+    if (entry.goalId && entry.amount > 0) {
+      setData((prev) => ({
+        ...prev,
+        goals: (prev.goals || []).map((g) => {
+          if (g.id === entry.goalId) {
+            const current = Number(g.currentAmount) || 0;
+            const updated = entry.type === "debit"
+              ? current + entry.amount
+              : Math.max(0, current - entry.amount);
+            return { ...g, currentAmount: updated };
+          }
+          return g;
+        }),
+      }));
+    }
+
+    // Auto-save attached invoice to data.invoices archive
+    if (entry.invoice) {
+      const newInv = {
+        id: "inv_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6),
+        txId: entry.id,
+        date: dateStr,
+        amount: entry.amount,
+        description: entry.note || "Transaction Receipt",
+        category: entry.catId,
+        accountId: entry.accountId,
+        fileName: entry.invoice.fileName,
+        fileType: entry.invoice.fileType,
+        fileSize: entry.invoice.fileSize,
+        fileData: entry.invoice.fileData,
+        createdAt: new Date().toISOString(),
+      };
+      setData((prev) => ({
+        ...prev,
+        invoices: [newInv, ...(prev.invoices || [])],
+      }));
+    }
+
     // Auto-link EMI: reduce debt outstanding
     if (entry.debtId && entry.amount > 0) {
       setData((prev) => ({
@@ -3322,6 +3643,53 @@ function FinCompassApp() {
       }
     }
 
+    // Revert Credit Card balance if linked
+    const delCardId = target?.creditCardId || target?.accountId;
+    if (target && delCardId) {
+      setData((prev) => {
+        const cards = prev.creditCards || [];
+        if (!cards.some((c) => c.id === delCardId)) return prev;
+        return {
+          ...prev,
+          creditCards: cards.map((c) => {
+            if (c.id === delCardId) {
+              const curOut = Number(c.currentOutstanding) || 0;
+              const revertedOut = target.type === "debit"
+                ? Math.max(0, curOut - target.amount)
+                : curOut + target.amount;
+              return { ...c, currentOutstanding: revertedOut };
+            }
+            return c;
+          }),
+        };
+      });
+    }
+
+    // Revert Goal savings if linked
+    if (target && target.goalId && target.amount > 0) {
+      setData((prev) => ({
+        ...prev,
+        goals: (prev.goals || []).map((g) => {
+          if (g.id === target.goalId) {
+            const current = Number(g.currentAmount) || 0;
+            const reverted = target.type === "debit"
+              ? Math.max(0, current - target.amount)
+              : current + target.amount;
+            return { ...g, currentAmount: reverted };
+          }
+          return g;
+        }),
+      }));
+    }
+
+    // Remove linked invoice if was created with this transaction
+    if (target) {
+      setData((prev) => ({
+        ...prev,
+        invoices: (prev.invoices || []).filter((inv) => inv.txId !== target.id),
+      }));
+    }
+
     // Revert debt outstanding if EMI was linked
     if (target && target.debtId && target.amount > 0) {
       setData((prev) => ({
@@ -3350,6 +3718,209 @@ function FinCompassApp() {
       }));
     }
   }, [setCash, setBanks]);
+
+  // Credit Cards setter
+  const setCreditCards = useCallback((updater) => {
+    setData((prev) => ({
+      ...prev,
+      creditCards: typeof updater === "function" ? updater(prev.creditCards || []) : updater,
+    }));
+  }, []);
+
+  // Projections handlers
+  const handleAddProjection = useCallback((newProj) => {
+    setData((prev) => ({
+      ...prev,
+      projectedIncomes: [newProj, ...(prev.projectedIncomes || [])],
+    }));
+  }, []);
+
+  const handleUpdateProjection = useCallback((updated) => {
+    setData((prev) => ({
+      ...prev,
+      projectedIncomes: (prev.projectedIncomes || []).map((p) => (p.id === updated.id ? updated : p)),
+    }));
+  }, []);
+
+  const handleDeleteProjection = useCallback((id) => {
+    setData((prev) => ({
+      ...prev,
+      projectedIncomes: (prev.projectedIncomes || []).filter((p) => p.id !== id),
+    }));
+  }, []);
+
+  const handleMarkAsReceived = useCallback((item) => {
+    // 1. Mark status as received
+    setData((prev) => ({
+      ...prev,
+      projectedIncomes: (prev.projectedIncomes || []).map((p) =>
+        p.id === item.id ? { ...p, status: "received" } : p
+      ),
+    }));
+
+    // 2. Automatically log as credit in DailyTracker
+    const today = new Date().toISOString().slice(0, 10);
+    const tx = {
+      id: "tx_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6),
+      time: new Date().toISOString(),
+      type: "credit",
+      catId: "salary",
+      note: `Projected money received: ${item.source}`,
+      amount: item.amount,
+      method: "upi",
+      accountId: item.accountId || (banks[0]?.id || "cash"),
+    };
+    handleAddEntry(today, tx);
+  }, [handleAddEntry, banks]);
+
+  // ── Directly Linked Invoice Handlers ──────────────────────────────
+  // 1. Attach an invoice/receipt file directly to an existing DailyTracker transaction
+  const handleAttachInvoiceToTx = useCallback((dateStr, txId, invoiceData) => {
+    if (!dateStr || !txId || !invoiceData) return;
+
+    // A. Update the transaction in dailyLogs
+    setDailyLogs((prevLogs) => {
+      const day = prevLogs[dateStr];
+      if (!day || !day.entries) return prevLogs;
+      const updatedDay = {
+        ...day,
+        entries: day.entries.map((e) =>
+          e.id === txId
+            ? {
+                ...e,
+                invoice: {
+                  fileName: invoiceData.fileName,
+                  fileType: invoiceData.fileType,
+                  fileSize: invoiceData.fileSize,
+                  fileData: invoiceData.fileData,
+                },
+              }
+            : e
+        ),
+      };
+      saveDailyLog(dateStr, updatedDay).catch(() => {});
+      return {
+        ...prevLogs,
+        [dateStr]: updatedDay,
+      };
+    });
+
+    // B. Keep data.invoices synchronized with this transaction (single source of truth)
+    const tx = dailyLogsRef.current[dateStr]?.entries?.find((e) => e.id === txId);
+    setData((prev) => {
+      const filtered = (prev.invoices || []).filter((inv) => inv.txId !== txId);
+      const newInv = {
+        id: "inv_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6),
+        txId,
+        date: dateStr,
+        amount: tx ? tx.amount : (invoiceData.amount || 0),
+        description: tx ? (tx.note || "Transaction Receipt") : (invoiceData.description || "Receipt"),
+        category: tx ? tx.catId : (invoiceData.category || "bills"),
+        accountId: tx ? tx.accountId : (invoiceData.accountId || ""),
+        fileName: invoiceData.fileName,
+        fileType: invoiceData.fileType,
+        fileSize: invoiceData.fileSize,
+        fileData: invoiceData.fileData,
+        createdAt: new Date().toISOString(),
+      };
+      return {
+        ...prev,
+        invoices: [newInv, ...filtered],
+      };
+    });
+  }, [setDailyLogs]);
+
+  // 2. Detach an invoice file from a transaction (keeps transaction and bank balance intact)
+  const handleDetachInvoiceFromTx = useCallback((dateStr, txId) => {
+    if (!dateStr || !txId) return;
+
+    // A. Remove invoice from dailyLogs entry
+    setDailyLogs((prevLogs) => {
+      const day = prevLogs[dateStr];
+      if (!day || !day.entries) return prevLogs;
+      const updatedDay = {
+        ...day,
+        entries: day.entries.map((e) => {
+          if (e.id === txId) {
+            const { invoice, ...rest } = e;
+            return rest;
+          }
+          return e;
+        }),
+      };
+      saveDailyLog(dateStr, updatedDay).catch(() => {});
+      return {
+        ...prevLogs,
+        [dateStr]: updatedDay,
+      };
+    });
+
+    // B. Remove from data.invoices
+    setData((prev) => ({
+      ...prev,
+      invoices: (prev.invoices || []).filter((inv) => inv.txId !== txId),
+    }));
+  }, [setDailyLogs]);
+
+  // 3. Add invoice handler:
+  //    - If linking to existing transaction: attaches directly without registering a duplicate
+  //    - If new expense: creates transaction ONCE in dailyLogs with invoice attached
+  const handleAddInvoice = useCallback((invData) => {
+    if (invData.txId && invData.date) {
+      handleAttachInvoiceToTx(invData.date, invData.txId, invData);
+      return;
+    }
+
+    const newTxId = "tx_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6);
+    const dateStr = invData.date || new Date().toISOString().slice(0, 10);
+    const isCreditCard = invData.accountId && (data.creditCards || []).some((c) => c.id === invData.accountId);
+    const tx = {
+      id: newTxId,
+      time: new Date().toISOString(),
+      type: "debit",
+      catId: invData.category || "bills",
+      note: invData.description || "Invoice Payment",
+      amount: invData.amount,
+      method: isCreditCard ? "credit_card" : "card",
+      accountId: invData.accountId || "",
+      creditCardId: isCreditCard ? invData.accountId : undefined,
+      invoice: {
+        fileName: invData.fileName,
+        fileType: invData.fileType,
+        fileSize: invData.fileSize,
+        fileData: invData.fileData,
+      },
+    };
+    // handleAddEntry already adds invoice to data.invoices and updates banks/cards/goals!
+    handleAddEntry(dateStr, tx);
+  }, [handleAddEntry, handleAttachInvoiceToTx, data.creditCards]);
+
+  // 4. Delete or detach invoice
+  const handleDeleteInvoice = useCallback((invId, deleteEntireTx = false) => {
+    const inv = (data.invoices || []).find((i) => i.id === invId || i.txId === invId);
+    if (!inv) {
+      setData((prev) => ({
+        ...prev,
+        invoices: (prev.invoices || []).filter((i) => i.id !== invId),
+      }));
+      return;
+    }
+
+    if (deleteEntireTx && inv.txId && inv.date) {
+      // Completely roll back balance, goal, and delete transaction
+      handleDeleteEntry(inv.date, inv.txId);
+    } else {
+      // Just unattach the invoice receipt, preserving transaction
+      if (inv.date && inv.txId) {
+        handleDetachInvoiceFromTx(inv.date, inv.txId);
+      } else {
+        setData((prev) => ({
+          ...prev,
+          invoices: (prev.invoices || []).filter((i) => i.id !== invId),
+        }));
+      }
+    }
+  }, [data.invoices, handleDeleteEntry, handleDetachInvoiceFromTx]);
 
 
   useEffect(() => {
@@ -3565,11 +4136,41 @@ function FinCompassApp() {
               logs={dailyLogs}
               onAddEntry={handleAddEntry}
               onDeleteEntry={handleDeleteEntry}
+              onAttachInvoice={handleAttachInvoiceToTx}
+              onDetachInvoice={handleDetachInvoiceFromTx}
               categories={categories}
               banks={banks}
               cash={cash}
               debts={data.debts || []}
               investments={data.investments || []}
+              creditCards={data.creditCards || []}
+              goals={data.goals || []}
+            />
+          )}
+          {tab === "projections" && (
+            <ProjectionsTab
+              projectedIncomes={data.projectedIncomes || []}
+              onAddProjection={handleAddProjection}
+              onUpdateProjection={handleUpdateProjection}
+              onDeleteProjection={handleDeleteProjection}
+              onMarkAsReceived={handleMarkAsReceived}
+              banks={banks}
+              cash={cash}
+            />
+          )}
+          {tab === "invoices" && (
+            <InvoicesTab
+              invoices={data.invoices || []}
+              dailyLogs={dailyLogs}
+              onAddInvoice={handleAddInvoice}
+              onAttachInvoiceToTx={handleAttachInvoiceToTx}
+              onDetachInvoiceFromTx={handleDetachInvoiceFromTx}
+              onDeleteInvoice={handleDeleteInvoice}
+              categories={categories}
+              banks={banks}
+              cash={cash}
+              creditCards={data.creditCards || []}
+              onNavigateToTab={setTab}
             />
           )}
           {tab === "analysis" && (
@@ -3596,10 +4197,36 @@ function FinCompassApp() {
               cash={cash}
               setBanks={setBanks}
               setCash={setCash}
+              creditCards={data.creditCards || []}
+              setCreditCards={setCreditCards}
+              dailyLogs={dailyLogs}
+              userProfile={data.personal}
             />
           )}
           {tab === "health" && <HealthTab health={health} profile={profile} />}
-          {tab === "goals" && <GoalsTab data={data} profile={profile} />}
+          {tab === "goals" && (
+            <GoalsTab
+              data={data}
+              profile={profile}
+              dailyLogs={dailyLogs}
+              onContributeGoal={(goalId, amount) => {
+                const today = new Date().toISOString().slice(0, 10);
+                const g = (data.goals || []).find((x) => x.id === goalId);
+                const targetBankId = (banks || [])[0]?.id || "cash";
+                handleAddEntry(today, {
+                  id: "tx_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6),
+                  time: new Date().toISOString(),
+                  type: "debit",
+                  catId: "goals",
+                  note: `Saved for ${g ? g.name : "Goal"}`,
+                  amount,
+                  method: "upi",
+                  accountId: targetBankId,
+                  goalId,
+                });
+              }}
+            />
+          )}
           {tab === "debt" && <DebtVsInvestTab data={data} profile={profile} />}
           {tab === "grow" && <GrowTab data={data} profile={profile} />}
           {tab === "simulate" && <SimulateTab data={data} profile={profile} />}

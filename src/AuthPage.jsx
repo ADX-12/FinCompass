@@ -81,6 +81,20 @@ export default function AuthPage({ onAuthSuccess }) {
     setLoading(false);
   };
 
+  const handleGuest = () => {
+    try {
+      localStorage.setItem("fincompass_skipped_auth", "true");
+    } catch {}
+    if (onAuthSuccess) {
+      onAuthSuccess({
+        uid: "guest_local",
+        displayName: "Guest User",
+        email: "guest@fincompass.local",
+        isGuest: true,
+      });
+    }
+  };
+
   return (
     <div
       style={{
@@ -440,6 +454,55 @@ export default function AuthPage({ onAuthSuccess }) {
               </button>
             </>
           )}
+
+          {/* Quick Offline / Local Test Mode */}
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "12px",
+              margin: "18px 0 12px",
+            }}
+          >
+            <div style={{ flex: 1, height: "1px", background: "#26354A" }} />
+            <span style={{ color: "#64748B", fontSize: "11px", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+              Quick Preview
+            </span>
+            <div style={{ flex: 1, height: "1px", background: "#26354A" }} />
+          </div>
+
+          <button
+            type="button"
+            id="continue-as-guest-btn"
+            onClick={handleGuest}
+            style={{
+              width: "100%",
+              padding: "12px 14px",
+              borderRadius: "14px",
+              border: "1.5px dashed rgba(20, 184, 166, 0.45)",
+              background: "rgba(20, 184, 166, 0.08)",
+              color: "#2DD4BF",
+              fontSize: "13px",
+              fontWeight: 600,
+              cursor: "pointer",
+              fontFamily: FONT,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: "8px",
+              transition: "all 0.2s",
+            }}
+            onMouseOver={(e) => {
+              e.currentTarget.style.background = "rgba(20, 184, 166, 0.16)";
+              e.currentTarget.style.borderColor = "#14B8A6";
+            }}
+            onMouseOut={(e) => {
+              e.currentTarget.style.background = "rgba(20, 184, 166, 0.08)";
+              e.currentTarget.style.borderColor = "rgba(20, 184, 166, 0.45)";
+            }}
+          >
+            <span>🧪</span> Continue as Guest (Offline / Local Mode)
+          </button>
         </div>
 
         {/* Visible Description Statement */}
