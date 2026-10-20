@@ -1365,6 +1365,7 @@ function getUpcomingPayments(data, dailyLogs) {
   // Collect all transaction IDs for this month from dailyLogs
   const paidDebtIds = new Set();
   const paidInvestmentIds = new Set();
+  const paidBillIds = new Set();
   const paidBillAmounts = new Map(); // name -> total paid amount
 
   Object.keys(dailyLogs || {}).forEach((dateStr) => {
@@ -1372,6 +1373,7 @@ function getUpcomingPayments(data, dailyLogs) {
     (dailyLogs[dateStr]?.entries || []).forEach((e) => {
       if (e.debtId) paidDebtIds.add(e.debtId);
       if (e.investmentId) paidInvestmentIds.add(e.investmentId);
+      if (e.billId) paidBillIds.add(e.billId);
       // For bills, track by matching amount in similar categories
       if (e.type !== "credit" && e.amount > 0) {
         const key = (e.note || e.catId || "").toLowerCase();
@@ -1388,6 +1390,8 @@ function getUpcomingPayments(data, dailyLogs) {
       const isPaid = paidDebtIds.has(d.id);
       payments.push({
         id: `emi_${d.id}`,
+        rawId: d.id,
+        targetType: "debt",
         name: d.name,
         amount: d.emi,
         day,
@@ -1409,6 +1413,8 @@ function getUpcomingPayments(data, dailyLogs) {
       const isPaid = paidInvestmentIds.has(inv.id);
       payments.push({
         id: `sip_${inv.id}`,
+        rawId: inv.id,
+        targetType: "investment",
         name: inv.name,
         amount: inv.monthlyContribution,
         day,
@@ -1422,27 +1428,31 @@ function getUpcomingPayments(data, dailyLogs) {
     }
   });
 
-  // Recurring bills — no direct transaction link, so check by bill name match in notes
+  // Recurring bills
   (data.bills || []).forEach((b) => {
     if (b.amount > 0 && b.paymentDay > 0) {
       const day = Math.min(b.paymentDay, daysInMonth);
       const isPast = day < currentDay;
-      // Heuristic: check if any transaction note contains the bill name (case-insensitive)
       const billNameLower = (b.name || "").toLowerCase();
-      let isPaid = false;
-      Object.keys(dailyLogs || {}).forEach((dateStr) => {
-        if (!dateStr.startsWith(monthStr)) return;
-        (dailyLogs[dateStr]?.entries || []).forEach((e) => {
-          if (e.type !== "credit" && e.amount > 0) {
-            const note = (e.note || "").toLowerCase();
-            if (note.includes(billNameLower) || (billNameLower.length > 3 && note.includes(billNameLower.slice(0, 4)))) {
-              isPaid = true;
+      let isPaid = paidBillIds.has(b.id);
+      if (!isPaid) {
+        // Fallback: check if any transaction note contains the bill name (case-insensitive)
+        Object.keys(dailyLogs || {}).forEach((dateStr) => {
+          if (!dateStr.startsWith(monthStr)) return;
+          (dailyLogs[dateStr]?.entries || []).forEach((e) => {
+            if (e.type !== "credit" && e.amount > 0) {
+              const note = (e.note || "").toLowerCase();
+              if (note.includes(billNameLower) || (billNameLower.length > 3 && note.includes(billNameLower.slice(0, 4)))) {
+                isPaid = true;
+              }
             }
-          }
+          });
         });
-      });
+      }
       payments.push({
         id: `bill_${b.id}`,
+        rawId: b.id,
+        targetType: "bill",
         name: b.name,
         amount: b.amount,
         day,
@@ -1459,7 +1469,7 @@ function getUpcomingPayments(data, dailyLogs) {
   return payments.sort((a, b) => a.day - b.day);
 }
 
-function DecideTab({ data, profile, health, recs, alerts, dailyLogs }) {
+function DecideTab({ data, profile, health, recs, alerts, dailyLogs, onMarkPaymentPaid }) {
   const C = useTheme();
   const top = recs[0];
   const payments = useMemo(() => getUpcomingPayments(data, dailyLogs), [data, dailyLogs]);
@@ -1663,8 +1673,22 @@ function DecideTab({ data, profile, health, recs, alerts, dailyLogs }) {
                         {p.type === "emi" ? "EMI" : p.type === "sip" ? "SIP" : "Bill"} · Not logged yet
                       </div>
                     </div>
-                    <div className="text-sm font-bold" style={{ ...NUM, color: C.danger }}>
-                      {inr(p.amount)}
+                    <div className="flex items-center gap-2">
+                      <div className="text-sm font-bold" style={{ ...NUM, color: C.danger }}>
+                        {inr(p.amount)}
+                      </div>
+                      {onMarkPaymentPaid && (
+                        <button
+                          type="button"
+                          onClick={() => onMarkPaymentPaid(p)}
+                          className="px-2.5 py-1 rounded-lg text-xs font-semibold text-white transition-transform hover:scale-105 active:scale-95 shadow-sm flex items-center gap-1 flex-shrink-0"
+                          style={{ background: "#EF4444" }}
+                          title={`Mark ${p.name} as paid today`}
+                        >
+                          <span>⚡</span>
+                          <span>Pay Now</span>
+                        </button>
+                      )}
                     </div>
                   </div>
                 ))}
@@ -1707,8 +1731,26 @@ function DecideTab({ data, profile, health, recs, alerts, dailyLogs }) {
                         {p.isToday && <span style={{ color: C.warn, fontWeight: 600 }}> · Due Today</span>}
                       </div>
                     </div>
-                    <div className="text-sm font-bold" style={{ ...NUM, color: p.type === "emi" ? C.danger : p.type === "sip" ? C.model : C.ink }}>
-                      {inr(p.amount)}
+                    <div className="flex items-center gap-2">
+                      <div className="text-sm font-bold" style={{ ...NUM, color: p.type === "emi" ? C.danger : p.type === "sip" ? C.model : C.ink }}>
+                        {inr(p.amount)}
+                      </div>
+                      {onMarkPaymentPaid && (
+                        <button
+                          type="button"
+                          onClick={() => onMarkPaymentPaid(p)}
+                          className="px-2.5 py-1 rounded-lg text-xs font-semibold transition-transform hover:scale-105 active:scale-95 border flex items-center gap-1 flex-shrink-0"
+                          style={{
+                            background: p.isToday ? "#10B981" : C.card,
+                            borderColor: p.isToday ? "#10B981" : C.rule,
+                            color: p.isToday ? "#fff" : C.ink,
+                          }}
+                          title={`Mark ${p.name} as paid today`}
+                        >
+                          <span>✓</span>
+                          <span>Mark Paid</span>
+                        </button>
+                      )}
                     </div>
                   </div>
                 ))}
@@ -3873,6 +3915,32 @@ function FinCompassApp() {
     handleAddEntry(today, tx);
   }, [handleAddEntry, banks]);
 
+  // 1-Click Pay/Mark as Paid for upcoming EMIs, SIPs, or Bills
+  const handleMarkPaymentPaid = useCallback((payment) => {
+    if (!payment) return;
+    const today = new Date().toISOString().slice(0, 10);
+    const catId = payment.type === "emi" ? "emi" : payment.type === "sip" ? "investment" : "bills";
+    const notePrefix = payment.type === "emi" ? "EMI" : payment.type === "sip" ? "SIP" : "Bill";
+    const tx = {
+      id: "tx_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6),
+      time: new Date().toISOString(),
+      type: "debit",
+      catId,
+      note: `${notePrefix}: ${payment.name}`,
+      amount: payment.amount,
+      method: "upi",
+      accountId: banks[0]?.id || (cash > 0 ? "cash" : ""),
+    };
+    if (payment.type === "emi" && payment.rawId) {
+      tx.debtId = payment.rawId;
+    } else if (payment.type === "sip" && payment.rawId) {
+      tx.investmentId = payment.rawId;
+    } else if (payment.type === "bill" && payment.rawId) {
+      tx.billId = payment.rawId;
+    }
+    handleAddEntry(today, tx);
+  }, [handleAddEntry, banks, cash]);
+
   // ── Directly Linked Invoice Handlers ──────────────────────────────
   // 1. Attach an invoice/receipt file directly to an existing DailyTracker transaction
   const handleAttachInvoiceToTx = useCallback((dateStr, txId, invoiceData) => {
@@ -4316,6 +4384,7 @@ function FinCompassApp() {
             <DecideTab
               data={data} profile={profile} health={health}
               recs={recs} alerts={alerts} dailyLogs={dailyLogs}
+              onMarkPaymentPaid={handleMarkPaymentPaid}
             />
           )}
           {tab === "plan" && (
@@ -4335,6 +4404,7 @@ function FinCompassApp() {
               investments={data.investments || []}
               creditCards={data.creditCards || []}
               goals={data.goals || []}
+              bills={data.bills || []}
             />
           )}
           {tab === "projections" && (

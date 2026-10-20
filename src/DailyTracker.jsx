@@ -73,6 +73,7 @@ function TransactionForm({
   investments = [],
   creditCards = [],
   goals = [],
+  bills = [],
 }) {
   const [amount, setAmount] = useState("");
   const [type, setType] = useState("debit"); // credit | debit
@@ -82,6 +83,7 @@ function TransactionForm({
   const [accountId, setAccountId] = useState(""); // bank id, "cash", creditCard id, or "" (none)
   const [debtId, setDebtId] = useState("");
   const [investmentId, setInvestmentId] = useState("");
+  const [billId, setBillId] = useState("");
   const [goalId, setGoalId] = useState("");
 
   // Invoice attachment state
@@ -92,8 +94,10 @@ function TransactionForm({
   const activeDebts = (debts || []).filter((d) => d.outstanding > 0);
   const activeInvestments = investments || [];
   const activeGoals = goals || [];
+  const activeBills = bills || [];
   const isEmi = catId === "emi";
   const isInvestment = catId === "investment";
+  const isBill = catId === "bills" || catId === "utilities" || catId === "rent";
   const isGoal = catId === "goals" || Boolean(goalId);
 
   // Selected goal details for live calculation preview
@@ -174,9 +178,10 @@ function TransactionForm({
       entry.goalId = goalId;
     }
 
-    // Link to specific debt or investment
+    // Link to specific debt, investment, or recurring bill
     if (isEmi && debtId) entry.debtId = debtId;
     if (isInvestment && investmentId) entry.investmentId = investmentId;
+    if (billId) entry.billId = billId;
 
     // Attach invoice if uploaded
     if (invoiceFile) {
@@ -192,6 +197,9 @@ function TransactionForm({
     setAmount("");
     setNote("");
     setGoalId("");
+    setDebtId("");
+    setInvestmentId("");
+    setBillId("");
     setInvoiceFile(null);
     setInvoicePreview(null);
   };
@@ -348,20 +356,28 @@ function TransactionForm({
           <label className="text-xs font-medium" style={{ color: C.muted }}>Link to Loan / Debt</label>
           <select
             value={debtId}
-            onChange={(e) => setDebtId(e.target.value)}
+            onChange={(e) => {
+              const val = e.target.value;
+              setDebtId(val);
+              const d = activeDebts.find((x) => x.id === val);
+              if (d) {
+                if (d.emi > 0) setAmount(String(d.emi));
+                if (!note || note.startsWith("EMI:")) setNote(`EMI: ${d.name}`);
+              }
+            }}
             className="mt-1 w-full rounded-xl border px-3 py-2 text-sm focus:outline-none"
             style={{ borderColor: "#EF4444", color: C.ink, background: C.card }}
           >
             <option value="" style={{ background: C.card }}>— Select a loan —</option>
             {activeDebts.map((d) => (
               <option key={d.id} value={d.id} style={{ background: C.card }}>
-                {d.name} — ₹{Math.round(d.outstanding).toLocaleString("en-IN")} @ {d.annualInterestRatePct}%
+                {d.name} — EMI ₹{Math.round(d.emi || 0).toLocaleString("en-IN")} (Bal: ₹{Math.round(d.outstanding).toLocaleString("en-IN")})
               </option>
             ))}
           </select>
           {debtId && (
             <div className="mt-1.5 text-xs rounded-lg px-3 py-2" style={{ background: "#EF444415", color: "#EF4444" }}>
-              ✅ This payment will reduce the outstanding balance of the linked loan
+              ✅ This payment will reduce the outstanding balance and remaining tenure of "{activeDebts.find((d) => d.id === debtId)?.name}"
             </div>
           )}
         </div>
@@ -370,23 +386,64 @@ function TransactionForm({
       {/* Investment — Investment picker */}
       {isInvestment && activeInvestments.length > 0 && (
         <div>
-          <label className="text-xs font-medium" style={{ color: C.muted }}>Link to Investment</label>
+          <label className="text-xs font-medium" style={{ color: C.muted }}>Link to Investment / SIP</label>
           <select
             value={investmentId}
-            onChange={(e) => setInvestmentId(e.target.value)}
+            onChange={(e) => {
+              const val = e.target.value;
+              setInvestmentId(val);
+              const inv = activeInvestments.find((x) => x.id === val);
+              if (inv) {
+                if (inv.monthlyContribution > 0) setAmount(String(inv.monthlyContribution));
+                if (!note || note.startsWith("SIP:")) setNote(`SIP: ${inv.name}`);
+              }
+            }}
             className="mt-1 w-full rounded-xl border px-3 py-2 text-sm focus:outline-none"
             style={{ borderColor: "#059669", color: C.ink, background: C.card }}
           >
             <option value="" style={{ background: C.card }}>— Select an investment —</option>
             {activeInvestments.map((inv) => (
               <option key={inv.id} value={inv.id} style={{ background: C.card }}>
-                {inv.name} — ₹{Math.round(inv.currentValue).toLocaleString("en-IN")}
+                {inv.name} — SIP ₹{Math.round(inv.monthlyContribution || 0).toLocaleString("en-IN")} (Val: ₹{Math.round(inv.currentValue).toLocaleString("en-IN")})
               </option>
             ))}
           </select>
           {investmentId && (
             <div className="mt-1.5 text-xs rounded-lg px-3 py-2" style={{ background: "#05966915", color: "#059669" }}>
-              ✅ This amount will be added to the linked investment's value
+              ✅ This amount will be added to the portfolio value of "{activeInvestments.find((inv) => inv.id === investmentId)?.name}"
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Bill — Recurring Bill picker */}
+      {(isBill || billId || (activeBills.length > 0 && !isEmi && !isInvestment)) && activeBills.length > 0 && (
+        <div>
+          <label className="text-xs font-medium" style={{ color: C.muted }}>Link to Recurring Bill</label>
+          <select
+            value={billId}
+            onChange={(e) => {
+              const val = e.target.value;
+              setBillId(val);
+              const b = activeBills.find((x) => x.id === val);
+              if (b) {
+                if (b.amount > 0) setAmount(String(b.amount));
+                if (!note || note.startsWith("Bill:")) setNote(`Bill: ${b.name}`);
+              }
+            }}
+            className="mt-1 w-full rounded-xl border px-3 py-2 text-sm focus:outline-none"
+            style={{ borderColor: "#EAB308", color: C.ink, background: C.card }}
+          >
+            <option value="" style={{ background: C.card }}>— Don't link to a bill (or select one) —</option>
+            {activeBills.map((b) => (
+              <option key={b.id} value={b.id} style={{ background: C.card }}>
+                {b.name} — ₹{Math.round(b.amount).toLocaleString("en-IN")}{b.paymentDay ? ` (Due ${b.paymentDay}th)` : ""}
+              </option>
+            ))}
+          </select>
+          {billId && (
+            <div className="mt-1.5 text-xs rounded-lg px-3 py-2" style={{ background: "#EAB30815", color: "#CA8A04" }}>
+              ✅ This payment marks "{activeBills.find((b) => b.id === billId)?.name}" as paid for this month in Payments This Month
             </div>
           )}
         </div>
@@ -569,6 +626,9 @@ function TxRow({
   banks = [],
   creditCards = [],
   goals = [],
+  debts = [],
+  investments = [],
+  bills = [],
 }) {
   const cat = categories.find((c) => c.id === tx.catId) || { icon: "📦", label: "Other", color: "#94A3B8" };
   const isCredit = tx.type === "credit";
@@ -580,6 +640,9 @@ function TxRow({
   const linkedCard = (creditCards || []).find((c) => c.id === tx.accountId || c.id === tx.creditCardId);
   const linkedBank = (banks || []).find((b) => b.id === tx.accountId);
   const linkedGoal = (goals || []).find((g) => g.id === tx.goalId);
+  const linkedDebt = (debts || []).find((d) => d.id === tx.debtId);
+  const linkedInv = (investments || []).find((inv) => inv.id === tx.investmentId);
+  const linkedBill = (bills || []).find((b) => b.id === tx.billId);
 
   let accountBadge = null;
   if (linkedCard) {
@@ -628,6 +691,27 @@ function TxRow({
           {linkedGoal && (
             <span className="text-xs px-1.5 py-0.5 rounded-full font-medium" style={{ background: "#8B5CF618", color: "#8B5CF6" }}>
               🎯 {linkedGoal.name}
+            </span>
+          )}
+
+          {/* Linked EMI Debt Badge */}
+          {linkedDebt && (
+            <span className="text-xs px-1.5 py-0.5 rounded-full font-medium" style={{ background: "#EF444415", color: "#EF4444" }}>
+              🏦 EMI: {linkedDebt.name}
+            </span>
+          )}
+
+          {/* Linked SIP Investment Badge */}
+          {linkedInv && (
+            <span className="text-xs px-1.5 py-0.5 rounded-full font-medium" style={{ background: "#05966915", color: "#059669" }}>
+              📈 SIP: {linkedInv.name}
+            </span>
+          )}
+
+          {/* Linked Recurring Bill Badge */}
+          {linkedBill && (
+            <span className="text-xs px-1.5 py-0.5 rounded-full font-medium" style={{ background: "#EAB30815", color: "#CA8A04" }}>
+              📄 Bill: {linkedBill.name}
             </span>
           )}
 
@@ -762,6 +846,7 @@ export default function DailyTrackerTab({
   investments = [],
   creditCards = [],
   goals = [],
+  bills = [],
 }) {
   const C = useContext(ThemeContext);
   const [selectedDay, setSelectedDay] = useState(todayStr());
@@ -903,6 +988,7 @@ export default function DailyTrackerTab({
               investments={investments}
               creditCards={creditCards}
               goals={goals}
+              bills={bills}
             />
           </div>
         )}
@@ -932,6 +1018,9 @@ export default function DailyTrackerTab({
                     banks={banks}
                     creditCards={creditCards}
                     goals={goals}
+                    debts={debts}
+                    investments={investments}
+                    bills={bills}
                   />
                 ))}
             </div>
