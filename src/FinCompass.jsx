@@ -20,7 +20,10 @@ import {
   loadDailyLogs,
   saveDailyLog,
   deleteDailyEntry,
+  saveInvoiceFile,
+  deleteInvoiceFile,
 } from "./firebase";
+import { saveLocalInvoiceFile, deleteLocalInvoiceFile } from "./fileStorage";
 import {
   Area,
   AreaChart,
@@ -3194,9 +3197,9 @@ function FinCompassApp() {
           personal: { ...BLANK_TEMPLATE.personal, ...parsed.personal },
           cashFlow: { ...BLANK_TEMPLATE.cashFlow, ...parsed.cashFlow },
           savings: { ...BLANK_TEMPLATE.savings, ...parsed.savings },
-          creditCards: parsed.creditCards || DEFAULT_CREDIT_CARDS,
-          projectedIncomes: parsed.projectedIncomes || DEFAULT_PROJECTED_INCOMES,
-          invoices: parsed.invoices || [],
+          creditCards: Array.isArray(parsed.creditCards) ? parsed.creditCards : DEFAULT_CREDIT_CARDS,
+          projectedIncomes: Array.isArray(parsed.projectedIncomes) ? parsed.projectedIncomes : DEFAULT_PROJECTED_INCOMES,
+          invoices: Array.isArray(parsed.invoices) ? parsed.invoices : [],
         };
       }
     } catch (e) {
@@ -3268,11 +3271,53 @@ function FinCompassApp() {
     } catch { return {}; }
   });
 
-  const [syncStatus, setSyncStatus] = useState("idle"); // idle | syncing | synced | offline
+  const [syncStatus, setSyncStatus] = useState("idle"); // idle | syncing | synced | offline | error
+  const [syncError, setSyncError] = useState(null);
+  const [syncErrorDismissed, setSyncErrorDismissed] = useState(false);
   const [tab, setTab] = useState("decide");
   const saveTimerRef = useRef(null);
   // Prevents Firestore save from firing while we are loading data from Firestore
   const isLoadingData = useRef(false);
+
+  const handleSyncError = useCallback((err) => {
+    console.error("Cloud sync failed:", err);
+    setSyncStatus("error");
+    setSyncError({
+      message: err?.message || "Failed to save data to cloud",
+      code: err?.code || "sync_error",
+      timestamp: Date.now(),
+    });
+    setSyncErrorDismissed(false);
+  }, []);
+
+  const handleRetrySync = useCallback(() => {
+    setSyncStatus("syncing");
+    setSyncError(null);
+    saveUserData(data)
+      .then(() => {
+        setSyncStatus("synced");
+        setSyncError(null);
+      })
+      .catch((err) => {
+        handleSyncError(err);
+      });
+  }, [data, handleSyncError]);
+
+  // Helper to detect if local data has user-entered content
+  const hasMeaningfulData = useCallback((d) => {
+    if (!d) return false;
+    if (d.personal?.name && d.personal.name !== "Ananya Rao") return true;
+    if (d.personal?.city || (d.personal?.age && d.personal.age !== 25)) return true;
+    if (d.cashFlow && (d.cashFlow.monthlySalary > 0 || d.cashFlow.otherMonthlyIncome > 0)) return true;
+    if (Array.isArray(d.investments) && d.investments.length > 0) return true;
+    if (Array.isArray(d.debts) && d.debts.length > 0) return true;
+    if (Array.isArray(d.bills) && d.bills.length > 0) return true;
+    if (Array.isArray(d.goals) && d.goals.length > 0) return true;
+    if (Array.isArray(d.creditCards) && d.creditCards.length > 0) return true;
+    if (Array.isArray(d.projectedIncomes) && d.projectedIncomes.length > 0) return true;
+    if (Array.isArray(d.invoices) && d.invoices.length > 0) return true;
+    return false;
+  }, []);
 
   // ── Auth state ──────────────────────────────────────────────────
   const [authUser, setAuthUser] = useState(() => (auth ? auth.currentUser : null));
@@ -3300,46 +3345,95 @@ function FinCompassApp() {
             },
             cashFlow: { ...BLANK_TEMPLATE.cashFlow, ...userData.cashFlow },
             savings: { ...BLANK_TEMPLATE.savings, ...userData.savings },
-            creditCards: userData.creditCards || DEFAULT_CREDIT_CARDS,
-            projectedIncomes: userData.projectedIncomes || DEFAULT_PROJECTED_INCOMES,
-            invoices: userData.invoices || [],
+            creditCards: Array.isArray(userData.creditCards) ? userData.creditCards : DEFAULT_CREDIT_CARDS,
+            projectedIncomes: Array.isArray(userData.projectedIncomes) ? userData.projectedIncomes : DEFAULT_PROJECTED_INCOMES,
+            invoices: Array.isArray(userData.invoices) ? userData.invoices : [],
           });
         } else {
-          // First time sign-in: all numbers zeroed, name and email from auth
-          const freshData = {
-            ...BLANK_TEMPLATE,
-            personal: {
-              ...BLANK_TEMPLATE.personal,
-              name: user.displayName || (user.email ? user.email.split("@")[0] : ""),
-              email: user.email || "",
-            },
-          };
-          setData(freshData);
-          saveUserData(freshData).catch(() => {});
+          // Check if local storage has existing non-blank data that failed to sync yesterday
+          let localData = null;
+          try {
+            const saved = localStorage.getItem("fincompass_user_data_v2");
+            if (saved) localData = JSON.parse(saved);
+          } catch {}
+
+          if (localData && hasMeaningfulData(localData)) {
+            console.log("Preserving existing local user data and syncing to cloud…");
+            const merged = {
+              ...BLANK_TEMPLATE,
+              ...localData,
+              personal: {
+                ...BLANK_TEMPLATE.personal,
+                ...localData.personal,
+                name: localData.personal?.name || user.displayName || "",
+                email: user.email || localData.personal?.email || "",
+              },
+            };
+            setData(merged);
+            saveUserData(merged)
+              .then(() => { setSyncStatus("synced"); setSyncError(null); })
+              .catch((err) => handleSyncError(err));
+          } else {
+            // First time sign-in: all numbers zeroed, name and email from auth
+            const freshData = {
+              ...BLANK_TEMPLATE,
+              personal: {
+                ...BLANK_TEMPLATE.personal,
+                name: user.displayName || (user.email ? user.email.split("@")[0] : ""),
+                email: user.email || "",
+              },
+            };
+            setData(freshData);
+            saveUserData(freshData).catch(() => {});
+          }
         }
         if (banksData) {
           setBanksRaw(banksData.banks || []);
           setCashRaw(banksData.cash || 0);
         } else {
-          setBanksRaw([]);
-          setCashRaw(0);
+          let localBanks = [];
+          let localCash = 0;
+          try {
+            localBanks = JSON.parse(localStorage.getItem("fincompass_banks_v1") || "[]");
+            localCash = Number(localStorage.getItem("fincompass_cash_v1")) || 0;
+          } catch {}
+          if (localBanks.length > 0 || localCash > 0) {
+            setBanksRaw(localBanks);
+            setCashRaw(localCash);
+            saveBanks(localBanks, localCash).catch(() => {});
+          } else {
+            setBanksRaw([]);
+            setCashRaw(0);
+          }
         }
-        if (logsData) {
+        if (logsData && Object.keys(logsData).length > 0) {
           setDailyLogsRaw(logsData);
         } else {
-          setDailyLogsRaw({});
+          let localLogs = {};
+          try {
+            localLogs = JSON.parse(localStorage.getItem("fincompass_daily_logs_v1") || "{}");
+          } catch {}
+          if (localLogs && Object.keys(localLogs).length > 0) {
+            setDailyLogsRaw(localLogs);
+            Object.entries(localLogs).forEach(([dStr, dLog]) => {
+              saveDailyLog(dStr, dLog).catch(() => {});
+            });
+          } else {
+            setDailyLogsRaw({});
+          }
         }
         setSyncStatus("synced");
+        setSyncError(null);
       })
       .catch((e) => {
         console.warn("Firestore load error:", e);
-        setSyncStatus("offline");
+        handleSyncError(e);
       })
       .finally(() => {
         // Allow saves again after load completes (success or failure)
         isLoadingData.current = false;
       });
-  }, []);
+  }, [handleSyncError, hasMeaningfulData]);
 
   // ── Auth state listener & data load ─────────────────────────────
   useEffect(() => {
@@ -3558,8 +3652,13 @@ function FinCompassApp() {
 
     // Auto-save attached invoice to data.invoices archive
     if (entry.invoice) {
+      const invId = entry.invoice.id || "inv_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6);
+      if (entry.invoice.fileData) {
+        saveLocalInvoiceFile(invId, entry.invoice);
+        saveInvoiceFile(invId, entry.invoice).catch(() => {});
+      }
       const newInv = {
-        id: "inv_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6),
+        id: invId,
         txId: entry.id,
         date: dateStr,
         amount: entry.amount,
@@ -3569,12 +3668,13 @@ function FinCompassApp() {
         fileName: entry.invoice.fileName,
         fileType: entry.invoice.fileType,
         fileSize: entry.invoice.fileSize,
-        fileData: entry.invoice.fileData,
+        thumbnail: entry.invoice.thumbnail || null,
+        hasFile: true,
         createdAt: new Date().toISOString(),
       };
       setData((prev) => ({
         ...prev,
-        invoices: [newInv, ...(prev.invoices || [])],
+        invoices: [newInv, ...(prev.invoices || []).filter((x) => x.txId !== entry.id)],
       }));
     }
 
@@ -3807,10 +3907,15 @@ function FinCompassApp() {
 
     // B. Keep data.invoices synchronized with this transaction (single source of truth)
     const tx = dailyLogsRef.current[dateStr]?.entries?.find((e) => e.id === txId);
+    const invId = invoiceData.id || "inv_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6);
+    if (invoiceData.fileData) {
+      saveLocalInvoiceFile(invId, invoiceData);
+      saveInvoiceFile(invId, invoiceData).catch(() => {});
+    }
     setData((prev) => {
       const filtered = (prev.invoices || []).filter((inv) => inv.txId !== txId);
       const newInv = {
-        id: "inv_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6),
+        id: invId,
         txId,
         date: dateStr,
         amount: tx ? tx.amount : (invoiceData.amount || 0),
@@ -3820,7 +3925,8 @@ function FinCompassApp() {
         fileName: invoiceData.fileName,
         fileType: invoiceData.fileType,
         fileSize: invoiceData.fileSize,
-        fileData: invoiceData.fileData,
+        thumbnail: invoiceData.thumbnail || null,
+        hasFile: true,
         createdAt: new Date().toISOString(),
       };
       return {
@@ -3856,10 +3962,17 @@ function FinCompassApp() {
     });
 
     // B. Remove from data.invoices
-    setData((prev) => ({
-      ...prev,
-      invoices: (prev.invoices || []).filter((inv) => inv.txId !== txId),
-    }));
+    setData((prev) => {
+      const target = (prev.invoices || []).find((inv) => inv.txId === txId);
+      if (target?.id) {
+        deleteLocalInvoiceFile(target.id);
+        deleteInvoiceFile(target.id).catch(() => {});
+      }
+      return {
+        ...prev,
+        invoices: (prev.invoices || []).filter((inv) => inv.txId !== txId),
+      };
+    });
   }, [setDailyLogs]);
 
   // 3. Add invoice handler:
@@ -3874,6 +3987,13 @@ function FinCompassApp() {
     const newTxId = "tx_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6);
     const dateStr = invData.date || new Date().toISOString().slice(0, 10);
     const isCreditCard = invData.accountId && (data.creditCards || []).some((c) => c.id === invData.accountId);
+    const invId = invData.id || "inv_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6);
+
+    if (invData.fileData) {
+      saveLocalInvoiceFile(invId, invData);
+      saveInvoiceFile(invId, invData).catch(() => {});
+    }
+
     const tx = {
       id: newTxId,
       time: new Date().toISOString(),
@@ -3883,12 +4003,14 @@ function FinCompassApp() {
       amount: invData.amount,
       method: isCreditCard ? "credit_card" : "card",
       accountId: invData.accountId || "",
-      creditCardId: isCreditCard ? invData.accountId : undefined,
+      ...(isCreditCard ? { creditCardId: invData.accountId } : {}),
       invoice: {
+        id: invId,
         fileName: invData.fileName,
         fileType: invData.fileType,
         fileSize: invData.fileSize,
         fileData: invData.fileData,
+        thumbnail: invData.thumbnail,
       },
     };
     // handleAddEntry already adds invoice to data.invoices and updates banks/cards/goals!
@@ -3899,11 +4021,20 @@ function FinCompassApp() {
   const handleDeleteInvoice = useCallback((invId, deleteEntireTx = false) => {
     const inv = (data.invoices || []).find((i) => i.id === invId || i.txId === invId);
     if (!inv) {
+      if (invId) {
+        deleteLocalInvoiceFile(invId);
+        deleteInvoiceFile(invId).catch(() => {});
+      }
       setData((prev) => ({
         ...prev,
         invoices: (prev.invoices || []).filter((i) => i.id !== invId),
       }));
       return;
+    }
+
+    if (inv.id) {
+      deleteLocalInvoiceFile(inv.id);
+      deleteInvoiceFile(inv.id).catch(() => {});
     }
 
     if (deleteEntireTx && inv.txId && inv.date) {
@@ -3933,7 +4064,7 @@ function FinCompassApp() {
     try {
       localStorage.setItem("fincompass_user_data_v2", JSON.stringify(data));
     } catch (e) {
-      console.error("Failed to save state:", e);
+      console.error("Failed to save state to localStorage:", e);
     }
     // Debounced Firestore save — skip while loading data from Firestore to
     // avoid overwriting cloud data with a stale local/blank state
@@ -3942,10 +4073,17 @@ function FinCompassApp() {
       saveTimerRef.current = setTimeout(() => {
         if (isLoadingData.current) return; // double-check at fire time
         setSyncStatus("syncing");
-        saveUserData(data).then(() => setSyncStatus("synced")).catch(() => setSyncStatus("offline"));
+        saveUserData(data)
+          .then(() => {
+            setSyncStatus("synced");
+            setSyncError(null);
+          })
+          .catch((err) => {
+            handleSyncError(err);
+          });
       }, 800);
     }
-  }, [data]);
+  }, [data, handleSyncError]);
 
   const C = useMemo(() => (isDark ? DARK_THEME : LIGHT_THEME), [isDark]);
   const profile = useMemo(() => deriveProfile(data), [data]);
@@ -3968,6 +4106,8 @@ function FinCompassApp() {
     ? { text: "☁️ Saving…", color: C.warn }
     : syncStatus === "synced"
     ? { text: "☁️ Synced", color: C.sure }
+    : syncStatus === "error"
+    ? { text: "⚠️ Sync Failed (Retry)", color: C.danger }
     : { text: "📵 Offline", color: C.faint };
 
   if (FIREBASE_CONFIGURED && authLoading) {
@@ -4057,9 +4197,18 @@ function FinCompassApp() {
 
             <div className="ml-auto flex items-center gap-2 sm:gap-3">
               {/* Sync status badge */}
-              <span className="hidden sm:inline text-xs font-medium" style={{ color: syncLabel.color }}>
+              <button
+                onClick={syncStatus === "error" || syncStatus === "offline" ? handleRetrySync : undefined}
+                className={`text-xs font-medium px-2 py-1 rounded-lg border transition-all ${syncStatus === "error" ? "cursor-pointer hover:scale-105 animate-pulse" : ""}`}
+                style={{
+                  color: syncLabel.color,
+                  borderColor: syncStatus === "error" ? "#EF444466" : C.rule,
+                  background: syncStatus === "error" ? "#EF444415" : "transparent",
+                }}
+                title={syncStatus === "error" ? "Cloud save failed. Click to retry sync now!" : syncLabel.text}
+              >
                 {syncLabel.text}
-              </span>
+              </button>
               <button
                 onClick={() => setIsDark((prev) => !prev)}
                 className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium border transition-colors"
@@ -4119,6 +4268,47 @@ function FinCompassApp() {
               })}
             </div>
           </nav>
+
+          {/* Prominent Cloud Sync Warning Banner */}
+          {syncStatus === "error" && !syncErrorDismissed && (
+            <div className="mx-auto max-w-6xl px-4 sm:px-6 pt-2 pb-2">
+              <div
+                className="flex items-center justify-between gap-3 p-3 rounded-xl border text-xs shadow-sm"
+                style={{
+                  background: isDark ? "#450A0A" : "#FEF2F2",
+                  borderColor: "#EF444455",
+                  color: isDark ? "#FECACA" : "#991B1B",
+                }}
+              >
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <span className="text-base flex-shrink-0">⚠️</span>
+                  <div className="min-w-0">
+                    <span className="font-bold">Cloud Backup Warning: </span>
+                    <span>
+                      Could not sync your latest changes to cloud Firestore ({syncError?.message || "Format or network issue"}).
+                      Your data is safely stored on this device.
+                    </span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  <button
+                    onClick={handleRetrySync}
+                    className="px-2.5 py-1 rounded-lg font-bold text-white shadow-sm transition-opacity hover:opacity-90"
+                    style={{ background: "#DC2626" }}
+                  >
+                    🔄 Retry Sync
+                  </button>
+                  <button
+                    onClick={() => setSyncErrorDismissed(true)}
+                    className="p-1 rounded hover:bg-black/10 transition-colors font-bold text-sm"
+                    title="Dismiss notice"
+                  >
+                    ✕
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </header>
 
         <main className="mx-auto max-w-6xl px-4 py-6 sm:px-6 sm:py-8">

@@ -1,5 +1,8 @@
-import React, { useState, useMemo, useContext } from "react";
+import React, { useState, useMemo, useContext, useEffect } from "react";
 import { ThemeContext } from "./FinCompassContext";
+import { processInvoiceFile } from "./imageCompressor";
+import { getLocalInvoiceFile } from "./fileStorage";
+import { loadInvoiceFile } from "./firebase";
 
 /* ================================================================== *
  * DailyTracker — Pure transaction log (credit & debit)
@@ -103,30 +106,40 @@ function TransactionForm({
     return (creditCards || []).find((c) => c.id === accountId);
   }, [creditCards, accountId]);
 
-  const handleInvoiceUpload = (e) => {
+  const [invoiceLoading, setInvoiceLoading] = useState(false);
+  const [invoiceError, setInvoiceError] = useState("");
+
+  const handleInvoiceUpload = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const reader = new FileReader();
-    reader.onload = (loadEvent) => {
-      const dataUrl = loadEvent.target.result;
+    setInvoiceLoading(true);
+    setInvoiceError("");
+    try {
+      const processed = await processInvoiceFile(file);
       setInvoiceFile({
-        name: file.name,
-        type: file.type,
-        size: file.size,
-        data: dataUrl,
+        name: processed.name,
+        type: processed.type,
+        size: processed.size,
+        data: processed.dataUrl,
+        thumbnail: processed.thumbnail,
       });
-      setInvoicePreview(dataUrl);
+      setInvoicePreview(processed.dataUrl);
       if (!note) {
         setNote(file.name.replace(/\.[^/.]+$/, "").replace(/[-_]/g, " "));
       }
-    };
-    reader.readAsDataURL(file);
+    } catch (err) {
+      console.warn("Invoice upload processing failed:", err);
+      setInvoiceError(err.message || "Could not process this file.");
+    } finally {
+      setInvoiceLoading(false);
+    }
   };
 
   const handleRemoveInvoice = () => {
     setInvoiceFile(null);
     setInvoicePreview(null);
+    setInvoiceError("");
   };
 
   const handleSubmit = (e) => {
@@ -516,12 +529,18 @@ function TransactionForm({
             />
             <button
               type="button"
+              disabled={invoiceLoading}
               onClick={() => document.getElementById("dt-invoice-file-upload")?.click()}
-              className="w-full py-2 px-3 rounded-lg border border-dashed text-xs font-medium text-center transition-colors hover:border-blue-500"
+              className="w-full py-2 px-3 rounded-lg border border-dashed text-xs font-medium text-center transition-colors hover:border-blue-500 disabled:opacity-50"
               style={{ borderColor: C.rule, color: C.muted }}
             >
-              + Upload bill, receipt, or invoice file
+              {invoiceLoading ? "⏳ Compressing & optimizing receipt…" : "+ Upload bill, receipt, or invoice file"}
             </button>
+            {invoiceError && (
+              <div className="mt-1.5 text-xs text-red-500 font-medium">
+                ⚠️ {invoiceError}
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -635,19 +654,22 @@ function TxRow({
                 type="file"
                 accept="image/*,application/pdf"
                 className="hidden"
-                onChange={(e) => {
+                onChange={async (e) => {
                   const file = e.target.files?.[0];
                   if (!file) return;
-                  const reader = new FileReader();
-                  reader.onload = (loadEvent) => {
+                  try {
+                    const processed = await processInvoiceFile(file);
                     onAttachInvoice(selectedDay, tx.id, {
-                      fileName: file.name,
-                      fileType: file.type,
-                      fileSize: file.size,
-                      fileData: loadEvent.target.result,
+                      id: "inv_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6),
+                      fileName: processed.name,
+                      fileType: processed.type,
+                      fileSize: processed.size,
+                      fileData: processed.dataUrl,
+                      thumbnail: processed.thumbnail,
                     });
-                  };
-                  reader.readAsDataURL(file);
+                  } catch (err) {
+                    alert(err.message || "Failed to attach invoice file.");
+                  }
                 }}
               />
             </label>
@@ -745,6 +767,47 @@ export default function DailyTrackerTab({
   const [selectedDay, setSelectedDay] = useState(todayStr());
   const [showForm, setShowForm] = useState(true);
   const [viewingInvoice, setViewingInvoice] = useState(null);
+  const [viewingFileContent, setViewingFileContent] = useState(null);
+  const [viewingFileLoading, setViewingFileLoading] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    if (viewingInvoice) {
+      if (viewingInvoice.fileData) {
+        setViewingFileContent(viewingInvoice.fileData);
+        setViewingFileLoading(false);
+      } else {
+        const invId = viewingInvoice.id || viewingInvoice.tx?.id;
+        setViewingFileLoading(true);
+        getLocalInvoiceFile(invId)
+          .then((cached) => {
+            if (active && cached?.fileData) {
+              setViewingFileContent(cached.fileData);
+              setViewingFileLoading(false);
+              return true;
+            }
+            return false;
+          })
+          .then((found) => {
+            if (!found && active) {
+              return loadInvoiceFile(invId).then((cloud) => {
+                if (active) {
+                  setViewingFileContent(cloud?.fileData || null);
+                  setViewingFileLoading(false);
+                }
+              });
+            }
+          })
+          .catch(() => {
+            if (active) setViewingFileLoading(false);
+          });
+      }
+    } else {
+      setViewingFileContent(null);
+      setViewingFileLoading(false);
+    }
+    return () => { active = false; };
+  }, [viewingInvoice]);
   const last30 = useMemo(() => getLast30Days(), []);
 
   const selectedLog = logs[selectedDay] || { entries: [] };
@@ -932,20 +995,32 @@ export default function DailyTrackerTab({
                 ✕
               </button>
             </div>
-            <div className="p-4 flex items-center justify-center max-h-[70vh] overflow-auto bg-black/5 dark:bg-black/30">
-              {viewingInvoice.fileType === "application/pdf" || viewingInvoice.fileName?.endsWith(".pdf") ? (
-                <iframe
-                  src={viewingInvoice.fileData}
-                  title="Invoice PDF"
-                  className="w-full h-96 rounded-lg border"
-                  style={{ borderColor: C.rule }}
-                />
+            <div className="p-4 flex items-center justify-center max-h-[70vh] overflow-auto bg-black/5 dark:bg-black/30 min-h-[250px]">
+              {viewingFileLoading ? (
+                <div className="text-center py-10" style={{ color: C.muted }}>
+                  <div className="text-2xl animate-spin mb-2">⏳</div>
+                  <div className="text-xs">Loading receipt attachment…</div>
+                </div>
+              ) : viewingFileContent ? (
+                viewingInvoice.fileType === "application/pdf" || viewingInvoice.fileName?.endsWith(".pdf") ? (
+                  <iframe
+                    src={viewingFileContent}
+                    title="Invoice PDF"
+                    className="w-full h-96 rounded-lg border"
+                    style={{ borderColor: C.rule }}
+                  />
+                ) : (
+                  <img
+                    src={viewingFileContent}
+                    alt={viewingInvoice.fileName}
+                    className="max-h-[60vh] max-w-full rounded-lg object-contain"
+                  />
+                )
               ) : (
-                <img
-                  src={viewingInvoice.fileData}
-                  alt={viewingInvoice.fileName}
-                  className="max-h-[60vh] max-w-full rounded-lg object-contain"
-                />
+                <div className="text-center py-10" style={{ color: C.muted }}>
+                  <span className="text-3xl block mb-2">📁</span>
+                  File content preview not available on this device.
+                </div>
               )}
             </div>
             <div className="px-5 py-3 border-t flex items-center justify-between text-xs gap-2" style={{ background: C.paper, borderColor: C.rule }}>
@@ -962,14 +1037,16 @@ export default function DailyTrackerTab({
                     ✂️ Detach Receipt
                   </button>
                 )}
-                <a
-                  href={viewingInvoice.fileData}
-                  download={viewingInvoice.fileName || "invoice"}
-                  className="px-3 py-1 rounded-lg text-white font-bold"
-                  style={{ background: "#2563EB" }}
-                >
-                  ⬇️ Download
-                </a>
+                {viewingFileContent && (
+                  <a
+                    href={viewingFileContent}
+                    download={viewingInvoice.fileName || "invoice"}
+                    className="px-3 py-1 rounded-lg text-white font-bold"
+                    style={{ background: "#2563EB" }}
+                  >
+                    ⬇️ Download
+                  </a>
+                )}
               </div>
             </div>
           </div>

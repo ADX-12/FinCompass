@@ -1,6 +1,9 @@
-import React, { useState, useMemo, useContext } from "react";
+import React, { useState, useMemo, useContext, useEffect } from "react";
 import { ThemeContext } from "./FinCompassContext";
 import { DEFAULT_CATEGORIES } from "./DailyTracker";
+import { processInvoiceFile } from "./imageCompressor";
+import { getLocalInvoiceFile } from "./fileStorage";
+import { loadInvoiceFile } from "./firebase";
 
 const inr = (n) => "₹" + Math.round(n || 0).toLocaleString("en-IN");
 const NUM = { fontVariantNumeric: "tabular-nums", fontFeatureSettings: '"tnum"' };
@@ -36,6 +39,8 @@ export default function InvoicesTab({
   const [uploadCat, setUploadCat] = useState(categories[0]?.id || "bills");
   const [uploadDate, setUploadDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [uploadAccount, setUploadAccount] = useState("");
+  const [uploadFileLoading, setUploadFileLoading] = useState(false);
+  const [uploadFileError, setUploadFileError] = useState("");
 
   // Flatten all transactions from dailyLogs
   const allTransactions = useMemo(() => {
@@ -114,25 +119,31 @@ export default function InvoicesTab({
     return allTransactions.find((t) => t.id === selectedTxId) || null;
   }, [allTransactions, selectedTxId]);
 
-  const handleFileChange = (e) => {
+  const handleFileChange = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const reader = new FileReader();
-    reader.onload = (loadEvent) => {
-      const dataUrl = loadEvent.target.result;
+    setUploadFileLoading(true);
+    setUploadFileError("");
+    try {
+      const processed = await processInvoiceFile(file);
       setUploadFile({
-        name: file.name,
-        type: file.type,
-        size: file.size,
-        data: dataUrl,
+        name: processed.name,
+        type: processed.type,
+        size: processed.size,
+        data: processed.dataUrl,
+        thumbnail: processed.thumbnail,
       });
-      setUploadPreview(dataUrl);
+      setUploadPreview(processed.dataUrl);
       if (!uploadDesc && uploadMode === "new_tx") {
         setUploadDesc(file.name.replace(/\.[^/.]+$/, "").replace(/[-_]/g, " "));
       }
-    };
-    reader.readAsDataURL(file);
+    } catch (err) {
+      console.warn("Invoice processing error:", err);
+      setUploadFileError(err.message || "Failed to process file.");
+    } finally {
+      setUploadFileLoading(false);
+    }
   };
 
   const handleResetUpload = () => {
@@ -146,6 +157,8 @@ export default function InvoicesTab({
     setUploadCat(categories[0]?.id || "bills");
     setUploadDate(new Date().toISOString().slice(0, 10));
     setUploadAccount("");
+    setUploadFileLoading(false);
+    setUploadFileError("");
     setShowUploadModal(false);
   };
 
@@ -157,10 +170,12 @@ export default function InvoicesTab({
       if (!selectedTx) return;
       if (onAttachInvoiceToTx) {
         onAttachInvoiceToTx(selectedTx.date, selectedTx.id, {
+          id: "inv_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6),
           fileName: uploadFile.name,
           fileType: uploadFile.type,
           fileSize: uploadFile.size,
           fileData: uploadFile.data,
+          thumbnail: uploadFile.thumbnail,
         });
       }
       handleResetUpload();
@@ -176,6 +191,7 @@ export default function InvoicesTab({
       fileType: uploadFile.type,
       fileSize: uploadFile.size,
       fileData: uploadFile.data,
+      thumbnail: uploadFile.thumbnail,
       amount: amt,
       description: uploadDesc.trim() || uploadFile.name,
       category: uploadCat,
@@ -229,10 +245,65 @@ export default function InvoicesTab({
     return currentMonthInvoices.reduce((s, inv) => s + (Number(inv.amount) || 0), 0);
   }, [currentMonthInvoices]);
 
-  const handleDownload = (inv) => {
+  const [previewContent, setPreviewContent] = useState(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    if (previewInvoice) {
+      if (previewInvoice.fileData) {
+        setPreviewContent(previewInvoice.fileData);
+        setPreviewLoading(false);
+      } else {
+        const invId = previewInvoice.id || previewInvoice.txId;
+        setPreviewLoading(true);
+        getLocalInvoiceFile(invId)
+          .then((cached) => {
+            if (active && cached?.fileData) {
+              setPreviewContent(cached.fileData);
+              setPreviewLoading(false);
+              return true;
+            }
+            return false;
+          })
+          .then((found) => {
+            if (!found && active) {
+              return loadInvoiceFile(invId).then((cloud) => {
+                if (active) {
+                  setPreviewContent(cloud?.fileData || null);
+                  setPreviewLoading(false);
+                }
+              });
+            }
+          })
+          .catch(() => {
+            if (active) setPreviewLoading(false);
+          });
+      }
+    } else {
+      setPreviewContent(null);
+      setPreviewLoading(false);
+    }
+    return () => { active = false; };
+  }, [previewInvoice]);
+
+  const handleDownload = async (inv) => {
+    let dataUrl = inv.fileData || (previewInvoice && previewInvoice.id === inv.id ? previewContent : null);
+    if (!dataUrl) {
+      const cached = await getLocalInvoiceFile(inv.id || inv.txId);
+      dataUrl = cached?.fileData;
+    }
+    if (!dataUrl) {
+      const cloud = await loadInvoiceFile(inv.id || inv.txId);
+      dataUrl = cloud?.fileData;
+    }
+    if (!dataUrl) {
+      alert("Invoice file not found on this device or cloud.");
+      return;
+    }
     const link = document.createElement("a");
-    link.href = inv.fileData;
-    link.download = inv.fileName || `invoice_${inv.id}.png`;
+    link.href = dataUrl;
+    link.download = inv.fileName || `invoice_${inv.id}.jpg`;
     link.click();
   };
 
@@ -450,9 +521,9 @@ export default function InvoicesTab({
                             </span>
                             <span className="text-[10px] text-gray-400">Click to preview PDF</span>
                           </div>
-                        ) : inv.fileData ? (
+                        ) : inv.thumbnail || inv.fileData ? (
                           <img
-                            src={inv.fileData}
+                            src={inv.thumbnail || inv.fileData}
                             alt={inv.description}
                             className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                           />
@@ -832,7 +903,17 @@ export default function InvoicesTab({
                     onChange={handleFileChange}
                     className="hidden"
                   />
-                  {uploadPreview ? (
+                  {uploadFileLoading ? (
+                    <div className="space-y-2 py-4">
+                      <div className="text-3xl animate-spin">⏳</div>
+                      <div className="text-xs font-semibold" style={{ color: C.ink }}>
+                        Optimizing and compressing receipt…
+                      </div>
+                      <div className="text-[11px]" style={{ color: C.muted }}>
+                        Scaling image for fast cloud sync
+                      </div>
+                    </div>
+                  ) : uploadPreview ? (
                     <div className="space-y-2">
                       {uploadFile?.type === "application/pdf" ? (
                         <div className="text-3xl text-red-500">📄</div>
@@ -855,11 +936,16 @@ export default function InvoicesTab({
                         Click to browse or drop invoice file
                       </div>
                       <div className="text-[10px]" style={{ color: C.faint }}>
-                        Supports JPG, PNG, WebP, and PDF up to 10MB
+                        Photos automatically compressed; PDFs supported up to 750 KB
                       </div>
                     </div>
                   )}
                 </div>
+                {uploadFileError && (
+                  <div className="mt-2 text-xs font-semibold text-red-500 bg-red-500/10 p-2.5 rounded-lg border border-red-500/20">
+                    ⚠️ {uploadFileError}
+                  </div>
+                )}
               </div>
 
               {/* MODAL ACTIONS */}
@@ -954,25 +1040,37 @@ export default function InvoicesTab({
 
             {/* Viewer Content */}
             <div className="p-4 sm:p-6 overflow-y-auto flex-1 flex items-center justify-center bg-black/10 dark:bg-black/30 min-h-[350px]">
-              {previewInvoice.fileType === "application/pdf" || (previewInvoice.fileName || "").endsWith(".pdf") ? (
-                <div className="w-full h-[65vh] flex flex-col items-center justify-center gap-4">
-                  <iframe
-                    src={previewInvoice.fileData}
-                    title={previewInvoice.description}
-                    className="w-full h-full rounded-xl border shadow-sm"
-                    style={{ borderColor: C.rule }}
-                  />
+              {previewLoading ? (
+                <div className="text-center py-12" style={{ color: C.muted }}>
+                  <div className="text-3xl animate-spin mb-3">⏳</div>
+                  <div className="text-xs font-semibold">Loading invoice file…</div>
                 </div>
-              ) : previewInvoice.fileData ? (
+              ) : previewInvoice.fileType === "application/pdf" || (previewInvoice.fileName || "").endsWith(".pdf") ? (
+                previewContent ? (
+                  <div className="w-full h-[65vh] flex flex-col items-center justify-center gap-4">
+                    <iframe
+                      src={previewContent}
+                      title={previewInvoice.description}
+                      className="w-full h-full rounded-xl border shadow-sm"
+                      style={{ borderColor: C.rule }}
+                    />
+                  </div>
+                ) : (
+                  <div className="text-center py-12" style={{ color: C.muted }}>
+                    <span className="text-4xl block mb-2">📄</span>
+                    PDF preview not available on this device.
+                  </div>
+                )
+              ) : previewContent ? (
                 <img
-                  src={previewInvoice.fileData}
+                  src={previewContent}
                   alt={previewInvoice.description}
                   className="max-h-[70vh] max-w-full rounded-xl shadow-lg object-contain"
                 />
               ) : (
                 <div className="text-center py-12" style={{ color: C.muted }}>
                   <span className="text-4xl block mb-2">📁</span>
-                  File content not viewable in browser preview.
+                  File content preview not available on this device.
                 </div>
               )}
             </div>
