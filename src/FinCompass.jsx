@@ -3273,7 +3273,15 @@ function FinCompassApp() {
   const [categories, setCategoriesRaw] = useState(() => {
     try {
       const saved = localStorage.getItem("fincompass_categories_v1");
-      return saved ? JSON.parse(saved) : DEFAULT_CATEGORIES;
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const existingIds = new Set(parsed.map((c) => c.id));
+          const missing = DEFAULT_CATEGORIES.filter((dc) => !existingIds.has(dc.id));
+          return missing.length > 0 ? [...parsed, ...missing] : parsed;
+        }
+      }
+      return DEFAULT_CATEGORIES;
     } catch { return DEFAULT_CATEGORIES; }
   });
 
@@ -3891,26 +3899,29 @@ function FinCompassApp() {
     }));
   }, []);
 
-  const handleMarkAsReceived = useCallback((item) => {
+  const handleMarkAsReceived = useCallback((item, customCategory, customAccountId, customAmount, customDate) => {
+    const today = customDate || new Date().toISOString().slice(0, 10);
+    const finalAmt = Number(customAmount) > 0 ? Number(customAmount) : item.amount;
+    const chosenCat = customCategory || item.category || "salary";
+
     // 1. Mark status as received
     setData((prev) => ({
       ...prev,
       projectedIncomes: (prev.projectedIncomes || []).map((p) =>
-        p.id === item.id ? { ...p, status: "received" } : p
+        p.id === item.id ? { ...p, status: "received", amount: finalAmt } : p
       ),
     }));
 
     // 2. Automatically log as credit in DailyTracker
-    const today = new Date().toISOString().slice(0, 10);
     const tx = {
       id: "tx_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6),
       time: new Date().toISOString(),
       type: "credit",
-      catId: "salary",
+      catId: chosenCat,
       note: `Projected money received: ${item.source}`,
-      amount: item.amount,
+      amount: finalAmt,
       method: "upi",
-      accountId: item.accountId || (banks[0]?.id || "cash"),
+      accountId: customAccountId || item.accountId || (banks[0]?.id || "cash"),
     };
     handleAddEntry(today, tx);
   }, [handleAddEntry, banks]);
@@ -4416,6 +4427,7 @@ function FinCompassApp() {
               onMarkAsReceived={handleMarkAsReceived}
               banks={banks}
               cash={cash}
+              categories={categories}
             />
           )}
           {tab === "invoices" && (

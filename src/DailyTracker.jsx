@@ -3,6 +3,7 @@ import { ThemeContext } from "./FinCompassContext";
 import { processInvoiceFile } from "./imageCompressor";
 import { getLocalInvoiceFile } from "./fileStorage";
 import { loadInvoiceFile } from "./firebase";
+import { PROJECTION_CATEGORIES } from "./ProjectionsTab";
 
 /* ================================================================== *
  * DailyTracker — Pure transaction log (credit & debit)
@@ -24,6 +25,7 @@ export const DEFAULT_CATEGORIES = [
   { id: "investment", label: "SIP / Investment", icon: "📈", color: "#059669", budget: 0 },
   { id: "goals", label: "Goal Savings", icon: "🎯", color: "#3B82F6", budget: 0 },
   { id: "salary", label: "Salary / Income", icon: "💼", color: "#10B981", budget: 0 },
+  { id: "freelance", label: "Freelance / Business", icon: "💻", color: "#3B82F6", budget: 0 },
   { id: "transfer", label: "Transfer", icon: "🔄", color: "#64748B", budget: 0 },
   { id: "other", label: "Other", icon: "📦", color: "#94A3B8", budget: 0 },
 ];
@@ -630,7 +632,10 @@ function TxRow({
   investments = [],
   bills = [],
 }) {
-  const cat = categories.find((c) => c.id === tx.catId) || { icon: "📦", label: "Other", color: "#94A3B8" };
+  const cat = (categories || []).find((c) => c.id === tx.catId)
+    || DEFAULT_CATEGORIES.find((c) => c.id === tx.catId)
+    || PROJECTION_CATEGORIES.find((c) => c.id === tx.catId)
+    || { icon: "📦", label: tx.catId ? tx.catId.charAt(0).toUpperCase() + tx.catId.slice(1) : "Other", color: "#94A3B8" };
   const isCredit = tx.type === "credit";
   const time = new Date(tx.time).toLocaleTimeString("en-IN", {
     hour: "2-digit", minute: "2-digit", hour12: true,

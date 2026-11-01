@@ -24,6 +24,7 @@ export default function ProjectionsTab({
   banks = [],
   cash = 0,
   upcomingExpenses = 0,
+  categories = [],
 }) {
   const C = useContext(ThemeContext);
   const [filter, setFilter] = useState("all"); // "all" | "pending" | "received"
@@ -43,6 +44,26 @@ export default function ProjectionsTab({
   const [targetAccount, setTargetAccount] = useState("");
 
   const todayStr = new Date().toISOString().slice(0, 10);
+
+  // Deposit / Receive Modal State (allows selecting category, account, amount before adding)
+  const [depositItem, setDepositItem] = useState(null);
+  const [depositCategory, setDepositCategory] = useState("salary");
+  const [depositAccountId, setDepositAccountId] = useState("");
+  const [depositAmount, setDepositAmount] = useState("");
+  const [depositDate, setDepositDate] = useState(todayStr);
+
+  // Combine standard projection categories with user's custom daily tracker categories
+  const availableCategories = useMemo(() => {
+    const list = [...PROJECTION_CATEGORIES];
+    const seen = new Set(list.map((c) => c.id));
+    (categories || []).forEach((c) => {
+      if (!seen.has(c.id)) {
+        list.push({ id: c.id, label: c.label, icon: c.icon || "🏷️", color: c.color || "#64748B" });
+        seen.add(c.id);
+      }
+    });
+    return list;
+  }, [categories]);
 
   // Filtered and sorted projections
   const filteredList = useMemo(() => {
@@ -349,7 +370,7 @@ export default function ProjectionsTab({
                   className="mt-1 w-full rounded-xl border px-3 py-2 text-sm focus:outline-none"
                   style={{ borderColor: C.rule, color: C.ink, background: C.card }}
                 >
-                  {PROJECTION_CATEGORIES.map((c) => (
+                  {availableCategories.map((c) => (
                     <option key={c.id} value={c.id} style={{ background: C.card }}>
                       {c.icon} {c.label}
                     </option>
@@ -549,10 +570,16 @@ export default function ProjectionsTab({
                             <div className="flex items-center gap-1.5">
                               {!isReceived && (
                                 <button
-                                  onClick={() => onMarkAsReceived(item)}
-                                  className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold text-white transition-opacity hover:opacity-90 shadow-sm"
+                                  onClick={() => {
+                                    setDepositItem(item);
+                                    setDepositCategory(item.category || "salary");
+                                    setDepositAccountId(item.accountId || (banks[0]?.id || (cash > 0 ? "cash" : "")));
+                                    setDepositAmount(String(item.amount || ""));
+                                    setDepositDate(todayStr);
+                                  }}
+                                  className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold text-white transition-all hover:scale-105 active:scale-95 shadow-sm"
                                   style={{ background: "#10B981" }}
-                                  title="Mark as Received & Log into Daily Transactions"
+                                  title="Mark as Received & Select Category / Account"
                                 >
                                   <span>✅</span>
                                   <span>Received</span>
@@ -588,6 +615,147 @@ export default function ProjectionsTab({
           )}
         </div>
       </div>
+
+      {/* Receive & Deposit Modal (with Category Selection) */}
+      {depositItem && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in">
+          <div
+            className="w-full max-w-md rounded-2xl p-6 shadow-2xl border space-y-4"
+            style={{ background: C.card, borderColor: C.rule }}
+          >
+            <div className="flex items-start justify-between">
+              <div>
+                <h3 className="text-base font-bold flex items-center gap-2" style={{ color: C.ink }}>
+                  <span>💰</span>
+                  <span>Deposit Received Money</span>
+                </h3>
+                <p className="text-xs mt-0.5" style={{ color: C.muted }}>
+                  Select category and destination account to log into Daily Tracker
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setDepositItem(null)}
+                className="text-sm font-bold opacity-60 hover:opacity-100 p-1 rounded-lg"
+                style={{ color: C.ink }}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="rounded-xl p-3 border" style={{ background: C.paper, borderColor: C.rule }}>
+              <div className="text-xs font-semibold" style={{ color: C.faint }}>Income Source</div>
+              <div className="text-sm font-bold mt-0.5 truncate" style={{ color: C.ink }}>
+                {depositItem.source}
+              </div>
+            </div>
+
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                const amt = parseFloat(depositAmount) || depositItem.amount;
+                onMarkAsReceived(depositItem, depositCategory, depositAccountId, amt, depositDate);
+                setDepositItem(null);
+              }}
+              className="space-y-3.5"
+            >
+              {/* Category selector */}
+              <div>
+                <label className="block text-xs font-semibold" style={{ color: C.ink }}>
+                  Category <span className="font-normal text-xs" style={{ color: C.muted }}>(choose how to classify this income)</span>
+                </label>
+                <select
+                  value={depositCategory}
+                  onChange={(e) => setDepositCategory(e.target.value)}
+                  className="mt-1 w-full rounded-xl border px-3 py-2 text-sm font-medium focus:outline-none focus:ring-2"
+                  style={{ borderColor: "#10B981", color: C.ink, background: C.card }}
+                >
+                  {availableCategories.map((c) => (
+                    <option key={c.id} value={c.id} style={{ background: C.card }}>
+                      {c.icon} {c.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Destination Account */}
+              <div>
+                <label className="block text-xs font-semibold" style={{ color: C.ink }}>
+                  Deposit to Account / Cash
+                </label>
+                <select
+                  value={depositAccountId}
+                  onChange={(e) => setDepositAccountId(e.target.value)}
+                  className="mt-1 w-full rounded-xl border px-3 py-2 text-sm focus:outline-none"
+                  style={{ borderColor: C.rule, color: C.ink, background: C.card }}
+                >
+                  <option value="" style={{ background: C.card }}>— Don't track account —</option>
+                  <option value="cash" style={{ background: C.card }}>💵 Cash in Hand ({inr(cash)})</option>
+                  {(banks || []).map((b) => (
+                    <option key={b.id} value={b.id} style={{ background: C.card }}>
+                      🏦 {b.name} ({inr(b.balance || 0)})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Amount and Date row */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold" style={{ color: C.ink }}>
+                    Amount Received (₹)
+                  </label>
+                  <input
+                    type="number"
+                    step="any"
+                    min="1"
+                    required
+                    value={depositAmount}
+                    onChange={(e) => setDepositAmount(e.target.value)}
+                    className="mt-1 w-full rounded-xl border px-3 py-2 text-sm font-bold text-emerald-500 focus:outline-none"
+                    style={{ borderColor: C.rule, background: C.card }}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold" style={{ color: C.ink }}>
+                    Received Date
+                  </label>
+                  <input
+                    type="date"
+                    required
+                    value={depositDate}
+                    onChange={(e) => setDepositDate(e.target.value)}
+                    className="mt-1 w-full rounded-xl border px-3 py-2 text-sm focus:outline-none"
+                    style={{ borderColor: C.rule, color: C.ink, background: C.card }}
+                  />
+                </div>
+              </div>
+
+              <div className="text-xs p-2.5 rounded-xl border" style={{ background: "#10B98115", borderColor: "#10B98133", color: "#059669" }}>
+                ✅ This will log a credit transaction in Daily Tracker and increase your selected account balance.
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setDepositItem(null)}
+                  className="px-4 py-2 rounded-xl text-xs font-semibold border transition-opacity hover:opacity-80"
+                  style={{ borderColor: C.rule, color: C.muted }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 rounded-xl text-xs font-bold text-white transition-opacity hover:opacity-90 shadow-sm"
+                  style={{ background: "#10B981" }}
+                >
+                  ✅ Confirm & Deposit
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

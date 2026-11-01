@@ -19,9 +19,10 @@ const inrShort = (n) => {
 };
 
 const PERIOD_OPTIONS = [
-  { value: "week", label: "This Week" },
   { value: "month", label: "This Month" },
+  { value: "last_month", label: "Last Month" },
   { value: "3months", label: "Last 3 Months" },
+  { value: "week", label: "This Week" },
 ];
 
 const CAT_COLORS = [
@@ -30,25 +31,82 @@ const CAT_COLORS = [
   "#10B981", "#F59E0B", "#8B5CF6", "#06B6D4", "#EF4444",
 ];
 
-function getPeriodDates(period) {
+function getPeriodDates(period, selectedMonth) {
   const now = new Date();
   const todayStr = now.toISOString().slice(0, 10);
+
   if (period === "week") {
     const start = new Date(now);
     start.setDate(now.getDate() - now.getDay()); // Sunday
-    return { start: start.toISOString().slice(0, 10), end: todayStr };
+    return {
+      start: start.toISOString().slice(0, 10),
+      end: todayStr,
+      label: "This Week",
+      monthName: "This Week",
+      monthKey: now.toISOString().slice(0, 7),
+    };
   }
+
   if (period === "month") {
     const start = new Date(now.getFullYear(), now.getMonth(), 1);
-    return { start: start.toISOString().slice(0, 10), end: todayStr };
+    const end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    const monthName = now.toLocaleDateString("en-IN", { month: "long", year: "numeric" });
+    return {
+      start: start.toISOString().slice(0, 10),
+      end: end.toISOString().slice(0, 10),
+      label: `This Month (${monthName})`,
+      monthName,
+      monthKey: now.toISOString().slice(0, 7),
+    };
   }
+
+  if (period === "last_month") {
+    const start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const end = new Date(now.getFullYear(), now.getMonth(), 0);
+    const monthName = start.toLocaleDateString("en-IN", { month: "long", year: "numeric" });
+    return {
+      start: start.toISOString().slice(0, 10),
+      end: end.toISOString().slice(0, 10),
+      label: `Last Month (${monthName})`,
+      monthName,
+      monthKey: start.toISOString().slice(0, 7),
+    };
+  }
+
+  if (period === "custom_month" && selectedMonth) {
+    const [y, m] = selectedMonth.split("-").map(Number);
+    const start = new Date(y, m - 1, 1);
+    const end = new Date(y, m, 0);
+    const monthName = start.toLocaleDateString("en-IN", { month: "long", year: "numeric" });
+    return {
+      start: start.toISOString().slice(0, 10),
+      end: end.toISOString().slice(0, 10),
+      label: monthName,
+      monthName,
+      monthKey: selectedMonth,
+    };
+  }
+
   if (period === "3months") {
     const start = new Date(now);
     start.setMonth(now.getMonth() - 2);
     start.setDate(1);
-    return { start: start.toISOString().slice(0, 10), end: todayStr };
+    return {
+      start: start.toISOString().slice(0, 10),
+      end: todayStr,
+      label: "Last 3 Months",
+      monthName: "Last 3 Months",
+      monthKey: now.toISOString().slice(0, 7),
+    };
   }
-  return { start: todayStr, end: todayStr };
+
+  return {
+    start: todayStr,
+    end: todayStr,
+    label: "Today",
+    monthName: "Today",
+    monthKey: todayStr.slice(0, 7),
+  };
 }
 
 function ChartTip({ active, payload, label }) {
@@ -297,14 +355,83 @@ function AddCategoryForm({ onAdd, C }) {
 /* ─── Main SpendingAnalysis Component ───────────────────────────── */
 export default function SpendingAnalysisTab({ logs, categories, onEditBudget, onAddCategory, onDeleteCategory }) {
   const C = useContext(ThemeContext);
-  const [period, setPeriod] = useState("month");
+  const [period, setPeriod] = useState("month"); // "month" | "last_month" | "custom_month" | "3months" | "week"
+  const [selectedMonth, setSelectedMonth] = useState(() => {
+    return new Date().toISOString().slice(0, 7); // "YYYY-MM"
+  });
 
-  const { start, end } = useMemo(() => getPeriodDates(period), [period]);
+  // Calculate available months from logs + previous 12 months
+  const availableMonths = useMemo(() => {
+    const monthSet = new Set();
+    const now = new Date();
+    // Pre-populate last 12 calendar months
+    for (let i = 0; i < 12; i++) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      monthSet.add(d.toISOString().slice(0, 7));
+    }
+    // Add any months present in historical transaction logs
+    Object.keys(logs || {}).forEach((d) => {
+      if (typeof d === "string" && d.length >= 7) {
+        monthSet.add(d.slice(0, 7));
+      }
+    });
+    return Array.from(monthSet)
+      .sort()
+      .reverse()
+      .map((ym) => {
+        const [y, m] = ym.split("-").map(Number);
+        const d = new Date(y, m - 1, 1);
+        return {
+          value: ym,
+          label: d.toLocaleDateString("en-IN", { month: "long", year: "numeric" }),
+        };
+      });
+  }, [logs]);
 
-  // All debit entries in period
+  const { start, end, label: periodLabel, monthName, monthKey } = useMemo(
+    () => getPeriodDates(period, selectedMonth),
+    [period, selectedMonth]
+  );
+
+  // Month stepping handlers
+  const handlePrevMonth = () => {
+    const activeKey = monthKey || selectedMonth;
+    const [y, m] = activeKey.split("-").map(Number);
+    const prevDate = new Date(y, m - 2, 1);
+    const prevKey = prevDate.toISOString().slice(0, 7);
+    setSelectedMonth(prevKey);
+    setPeriod("custom_month");
+  };
+
+  const handleNextMonth = () => {
+    const activeKey = monthKey || selectedMonth;
+    const [y, m] = activeKey.split("-").map(Number);
+    const nextDate = new Date(y, m, 1);
+    const nextKey = nextDate.toISOString().slice(0, 7);
+    setSelectedMonth(nextKey);
+    setPeriod("custom_month");
+  };
+
+  const handleSelectMonth = (ym) => {
+    setSelectedMonth(ym);
+    const nowKey = new Date().toISOString().slice(0, 7);
+    const prev = new Date();
+    prev.setMonth(prev.getMonth() - 1);
+    const lastKey = prev.toISOString().slice(0, 7);
+
+    if (ym === nowKey) {
+      setPeriod("month");
+    } else if (ym === lastKey) {
+      setPeriod("last_month");
+    } else {
+      setPeriod("custom_month");
+    }
+  };
+
+  // All debit entries in active period
   const periodEntries = useMemo(() => {
     const all = [];
-    Object.keys(logs).forEach((d) => {
+    Object.keys(logs || {}).forEach((d) => {
       if (d >= start && d <= end) {
         (logs[d]?.entries || []).forEach((e) => {
           if (e.type !== "credit") all.push({ ...e, date: d });
@@ -316,7 +443,7 @@ export default function SpendingAnalysisTab({ logs, categories, onEditBudget, on
 
   const totalSpent = useMemo(() => periodEntries.reduce((s, e) => s + e.amount, 0), [periodEntries]);
 
-  // Category sums in period
+  // Category sums in selected period
   const catSpend = useMemo(() => {
     const sums = {};
     periodEntries.forEach((e) => {
@@ -334,31 +461,42 @@ export default function SpendingAnalysisTab({ logs, categories, onEditBudget, on
     [categories, catSpend]
   );
 
-  // Weekly trend — group by day for week, by week for month, by month for 3months
+  // Trend data: days for week, weeks (W1-W5) for month/last_month/custom_month, months for 3months
   const trendData = useMemo(() => {
     if (period === "week") {
       const days = [];
       for (let i = 6; i >= 0; i--) {
-        const d = new Date(); d.setDate(d.getDate() - i);
+        const d = new Date();
+        d.setDate(d.getDate() - i);
         const ds = d.toISOString().slice(0, 10);
         const spent = (logs[ds]?.entries || []).filter((e) => e.type !== "credit").reduce((s, e) => s + e.amount, 0);
         days.push({ label: d.toLocaleDateString("en-IN", { weekday: "short" }), Spent: spent });
       }
       return days;
     }
-    if (period === "month") {
-      const weeks = {};
-      Object.keys(logs).filter((d) => d >= start && d <= end).forEach((d) => {
-        const weekNum = `W${Math.ceil(new Date(d + "T00:00:00").getDate() / 7)}`;
+    if (period === "month" || period === "last_month" || period === "custom_month") {
+      const daysInMonth = new Date(Number(start.slice(0, 4)), Number(start.slice(5, 7)), 0).getDate();
+      const weeks = { "W1 (1-7)": 0, "W2 (8-14)": 0, "W3 (15-21)": 0, "W4 (22-28)": 0 };
+      if (daysInMonth > 28) {
+        weeks[`W5 (29-${daysInMonth})`] = 0;
+      }
+      Object.keys(logs || {}).filter((d) => d >= start && d <= end).forEach((d) => {
+        const day = new Date(d + "T00:00:00").getDate();
+        let wKey = "W1 (1-7)";
+        if (day > 28) wKey = `W5 (29-${daysInMonth})`;
+        else if (day > 21) wKey = "W4 (22-28)";
+        else if (day > 14) wKey = "W3 (15-21)";
+        else if (day > 7) wKey = "W2 (8-14)";
+
         (logs[d]?.entries || []).filter((e) => e.type !== "credit").forEach((e) => {
-          weeks[weekNum] = (weeks[weekNum] || 0) + e.amount;
+          weeks[wKey] = (weeks[wKey] || 0) + e.amount;
         });
       });
-      return Object.entries(weeks).sort().map(([k, v]) => ({ label: k, Spent: v }));
+      return Object.entries(weeks).map(([k, v]) => ({ label: k, Spent: v }));
     }
     // 3 months
     const months = {};
-    Object.keys(logs).filter((d) => d >= start && d <= end).forEach((d) => {
+    Object.keys(logs || {}).filter((d) => d >= start && d <= end).forEach((d) => {
       const mLabel = new Date(d + "T00:00:00").toLocaleDateString("en-IN", { month: "short" });
       (logs[d]?.entries || []).filter((e) => e.type !== "credit").forEach((e) => {
         months[mLabel] = (months[mLabel] || 0) + e.amount;
@@ -367,64 +505,155 @@ export default function SpendingAnalysisTab({ logs, categories, onEditBudget, on
     return Object.entries(months).map(([k, v]) => ({ label: k, Spent: v }));
   }, [logs, period, start, end]);
 
-  // This month's budget totals
-  const thisMonthStart = useMemo(() => {
-    const now = new Date(); return new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
-  }, []);
-  const thisMonthSpend = useMemo(() => {
-    const sums = {};
-    Object.keys(logs).filter((d) => d >= thisMonthStart).forEach((d) => {
-      (logs[d]?.entries || []).filter((e) => e.type !== "credit").forEach((e) => {
-        sums[e.catId] = (sums[e.catId] || 0) + e.amount;
-      });
-    });
-    return sums;
-  }, [logs, thisMonthStart]);
-
   const totalBudget = categories.reduce((s, c) => s + (c.budget || 0), 0);
-  const totalThisMonth = Object.values(thisMonthSpend).reduce((s, v) => s + v, 0);
+  const isOverBudget = totalBudget > 0 && totalSpent > totalBudget;
+  const budgetDiff = totalBudget > 0 ? Math.abs(totalBudget - totalSpent) : 0;
+  const currentMonthPickerVal = monthKey || selectedMonth;
 
   return (
     <div className="space-y-6">
+      {/* Interactive Month & Period Control Bar */}
+      <div
+        className="rounded-2xl p-4 sm:p-5 flex flex-wrap items-center justify-between gap-4 border"
+        style={{ background: C.card, borderColor: C.rule }}
+      >
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl flex items-center justify-center text-xl" style={{ background: `${C.model}1A` }}>
+            📅
+          </div>
+          <div>
+            <div className="text-xs font-semibold uppercase tracking-wider" style={{ color: C.faint }}>
+              Analyzing Spending For
+            </div>
+            <div className="text-base sm:text-lg font-bold flex items-center gap-2" style={{ color: C.ink }}>
+              <span>{monthName}</span>
+              <span className="text-xs font-normal px-2 py-0.5 rounded-full" style={{ background: C.paper, color: C.muted, border: `1px solid ${C.rule}` }}>
+                {start} to {end}
+              </span>
+            </div>
+          </div>
+        </div>
 
-      {/* Budget overview summary */}
+        {/* Month Selector dropdown + Previous/Next controls */}
+        <div className="flex flex-wrap items-center gap-2">
+          <div
+            className="flex items-center rounded-xl border p-1 shadow-sm"
+            style={{ borderColor: C.rule, background: C.paper }}
+          >
+            <button
+              type="button"
+              onClick={handlePrevMonth}
+              className="px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all hover:bg-black/5 dark:hover:bg-white/10"
+              style={{ color: C.ink }}
+              title="Previous Month"
+            >
+              ◀
+            </button>
+
+            <select
+              value={currentMonthPickerVal}
+              onChange={(e) => handleSelectMonth(e.target.value)}
+              className="bg-transparent text-xs font-bold px-2 py-1 focus:outline-none cursor-pointer"
+              style={{ color: C.ink }}
+            >
+              {availableMonths.map((m) => (
+                <option key={m.value} value={m.value} style={{ background: C.card, color: C.ink }}>
+                  {m.label}
+                </option>
+              ))}
+            </select>
+
+            <button
+              type="button"
+              onClick={handleNextMonth}
+              className="px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all hover:bg-black/5 dark:hover:bg-white/10"
+              style={{ color: C.ink }}
+              title="Next Month"
+            >
+              ▶
+            </button>
+          </div>
+
+          {/* Quick Filter Pill Buttons */}
+          <div className="flex rounded-xl overflow-hidden border shadow-sm" style={{ borderColor: C.rule }}>
+            {PERIOD_OPTIONS.map((p) => {
+              const isActive = period === p.value;
+              return (
+                <button
+                  key={p.value}
+                  onClick={() => {
+                    setPeriod(p.value);
+                    if (p.value === "month") {
+                      setSelectedMonth(new Date().toISOString().slice(0, 7));
+                    } else if (p.value === "last_month") {
+                      const prev = new Date();
+                      prev.setMonth(prev.getMonth() - 1);
+                      setSelectedMonth(prev.toISOString().slice(0, 7));
+                    }
+                  }}
+                  className="px-3 py-1.5 text-xs font-semibold transition-all whitespace-nowrap"
+                  style={{
+                    background: isActive ? C.ink : "transparent",
+                    color: isActive ? C.paper : C.muted,
+                  }}
+                >
+                  {p.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
+      {/* Budget overview summary cards */}
       <div className="grid gap-4 sm:grid-cols-3">
         {[
-          { label: "Total Monthly Budget", value: totalBudget > 0 ? inr(totalBudget) : "Not set", color: C.model, icon: "🎯" },
-          { label: "Spent This Month", value: inr(totalThisMonth), color: totalThisMonth > totalBudget && totalBudget > 0 ? "#F87171" : C.ink, icon: "📊" },
-          { label: "Remaining", value: totalBudget > 0 ? inr(Math.max(0, totalBudget - totalThisMonth)) : "—", color: C.sure, icon: "💚" },
+          {
+            label: "Total Monthly Budget",
+            value: totalBudget > 0 ? inr(totalBudget) : "Not set",
+            color: C.model,
+            icon: "🎯",
+          },
+          {
+            label: `Spent in ${monthName}`,
+            value: inr(totalSpent),
+            color: isOverBudget ? "#F87171" : C.ink,
+            icon: "📊",
+          },
+          {
+            label: isOverBudget ? "Over Budget" : "Remaining Budget",
+            value: totalBudget > 0
+              ? isOverBudget
+                ? `+${inr(budgetDiff)} over`
+                : inr(budgetDiff)
+              : "—",
+            color: isOverBudget ? "#F87171" : C.sure,
+            icon: isOverBudget ? "⚠️" : "💚",
+          },
         ].map((s) => (
           <div key={s.label} className="rounded-2xl p-5" style={{ background: C.card, border: `1.5px solid ${C.rule}` }}>
             <div className="text-2xl">{s.icon}</div>
-            <div className="text-xs font-medium mt-1" style={{ color: C.muted }}>{s.label}</div>
+            <div className="text-xs font-medium mt-1 truncate" style={{ color: C.muted }}>{s.label}</div>
             <div className="text-2xl font-bold mt-0.5" style={{ ...NUM, color: s.color }}>{s.value}</div>
           </div>
         ))}
       </div>
 
-      {/* Period selector + total */}
+      {/* Trend chart */}
       <div className="rounded-2xl p-5" style={{ background: C.card, border: `1.5px solid ${C.rule}` }}>
         <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
           <div>
-            <h2 className="font-semibold text-base" style={{ color: C.ink }}>📈 Spending Analysis</h2>
-            <p className="text-xs mt-0.5" style={{ color: C.muted }}>Total spent: <span style={{ fontWeight: 700, color: "#F87171", ...NUM }}>{inr(totalSpent)}</span></p>
+            <h2 className="font-semibold text-base" style={{ color: C.ink }}>📈 Spending Breakdown</h2>
+            <p className="text-xs mt-0.5" style={{ color: C.muted }}>
+              Total spent in {monthName}: <span style={{ fontWeight: 700, color: "#F87171", ...NUM }}>{inr(totalSpent)}</span>
+            </p>
           </div>
-          <div className="flex rounded-xl overflow-hidden border" style={{ borderColor: C.rule }}>
-            {PERIOD_OPTIONS.map((p) => (
-              <button
-                key={p.value}
-                onClick={() => setPeriod(p.value)}
-                className="px-3 py-1.5 text-xs font-semibold transition-all"
-                style={{ background: period === p.value ? C.ink : "transparent", color: period === p.value ? C.paper : C.muted }}
-              >
-                {p.label}
-              </button>
-            ))}
-          </div>
+          <span className="text-xs font-medium px-2.5 py-1 rounded-lg border" style={{ borderColor: C.rule, color: C.muted }}>
+            {trendData.length} time intervals tracked
+          </span>
         </div>
 
-        {/* Trend chart */}
-        {trendData.length > 0 ? (
+        {trendData.length > 0 && totalSpent > 0 ? (
           <div className="h-48">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={trendData} margin={{ top: 5, right: 8, left: 0, bottom: 5 }}>
@@ -444,7 +673,10 @@ export default function SpendingAnalysisTab({ logs, categories, onEditBudget, on
           <div className="h-48 flex items-center justify-center" style={{ color: C.faint }}>
             <div className="text-center">
               <div className="text-3xl mb-2">📭</div>
-              <p className="text-sm">No spending data for this period</p>
+              <p className="text-sm">No spending logged for {monthName}</p>
+              <p className="text-xs mt-1" style={{ color: C.muted }}>
+                Use the Month Selector above or click "Last Month" to see historical data.
+              </p>
             </div>
           </div>
         )}
@@ -454,7 +686,7 @@ export default function SpendingAnalysisTab({ logs, categories, onEditBudget, on
       {pieData.length > 0 && (
         <div className="grid gap-4 lg:grid-cols-2">
           <div className="rounded-2xl p-5" style={{ background: C.card, border: `1.5px solid ${C.rule}` }}>
-            <h3 className="font-semibold text-sm mb-4" style={{ color: C.ink }}>🍰 Category Split</h3>
+            <h3 className="font-semibold text-sm mb-4" style={{ color: C.ink }}>🍰 Category Split ({monthName})</h3>
             <div className="h-52">
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
@@ -468,7 +700,7 @@ export default function SpendingAnalysisTab({ logs, categories, onEditBudget, on
           </div>
 
           <div className="rounded-2xl p-5" style={{ background: C.card, border: `1.5px solid ${C.rule}` }}>
-            <h3 className="font-semibold text-sm mb-4" style={{ color: C.ink }}>Top Categories</h3>
+            <h3 className="font-semibold text-sm mb-4" style={{ color: C.ink }}>Top Categories ({monthName})</h3>
             <div className="space-y-3">
               {pieData.slice(0, 6).map((c) => {
                 const pct = totalSpent > 0 ? (c.value / totalSpent) * 100 : 0;
@@ -494,14 +726,16 @@ export default function SpendingAnalysisTab({ logs, categories, onEditBudget, on
         <div className="flex items-center justify-between mb-4">
           <div>
             <h2 className="font-semibold text-base" style={{ color: C.ink }}>💰 Category Budgets</h2>
-            <p className="text-xs mt-0.5" style={{ color: C.muted }}>Spending tracked against this month's data</p>
+            <p className="text-xs mt-0.5" style={{ color: C.muted }}>
+              Spending tracked against <strong>{monthName}</strong> data
+            </p>
           </div>
         </div>
 
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 mb-4">
           {categories.map((cat) => (
             <div key={cat.id} className="relative group">
-              <BudgetCard cat={cat} spent={thisMonthSpend[cat.id] || 0} onEditBudget={onEditBudget} C={C} />
+              <BudgetCard cat={cat} spent={catSpend[cat.id] || 0} onEditBudget={onEditBudget} C={C} />
               {/* Delete button — visible on hover for all categories */}
               <button
                 onClick={() => {
@@ -516,7 +750,6 @@ export default function SpendingAnalysisTab({ logs, categories, onEditBudget, on
                 🗑️
               </button>
             </div>
-
           ))}
         </div>
 
