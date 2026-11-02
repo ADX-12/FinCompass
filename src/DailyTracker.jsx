@@ -76,6 +76,7 @@ function TransactionForm({
   creditCards = [],
   goals = [],
   bills = [],
+  onPreviewInvoice,
 }) {
   const [amount, setAmount] = useState("");
   const [type, setType] = useState("debit"); // credit | debit
@@ -117,7 +118,10 @@ function TransactionForm({
       const curOut = Number(cc.currentOutstanding) || 0;
       const bDay = Number(cc.billDay) || 1;
       const dDays = Number(cc.dueDays) || 20;
-      const dueDay = ((bDay + dDays - 1) % 30) + 1;
+      const explicitDueDay = Number(cc.dueDay);
+      const dueDay = (explicitDueDay && explicitDueDay >= 1 && explicitDueDay <= 31)
+        ? explicitDueDay
+        : (((bDay + dDays - 1) % 30) + 1);
       list.push({
         id: `cc_bill_${cc.id}`,
         key: `cc_bill_${cc.id}`,
@@ -229,10 +233,12 @@ function TransactionForm({
     // Attach invoice if uploaded
     if (invoiceFile) {
       entry.invoice = {
+        id: invoiceFile.id || "inv_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6),
         fileName: invoiceFile.name,
         fileType: invoiceFile.type,
         fileSize: invoiceFile.size,
         fileData: invoiceFile.data,
+        thumbnail: invoiceFile.thumbnail || invoiceFile.data,
       };
     }
 
@@ -652,24 +658,54 @@ function TransactionForm({
         </div>
 
         {invoiceFile ? (
-          <div className="flex items-center gap-3 p-2 rounded-lg" style={{ background: C.paper }}>
+          <div
+            onClick={() => {
+              if (onPreviewInvoice) {
+                onPreviewInvoice({
+                  fileName: invoiceFile.name,
+                  fileType: invoiceFile.type,
+                  fileSize: invoiceFile.size,
+                  fileData: invoicePreview,
+                  thumbnail: invoiceFile.thumbnail || invoicePreview,
+                });
+              }
+            }}
+            className="flex items-center gap-3 p-2.5 rounded-xl border cursor-pointer hover:border-blue-500 transition-colors"
+            style={{ background: C.paper, borderColor: C.rule }}
+            title="Click to preview attached receipt"
+          >
             {invoiceFile.type === "application/pdf" ? (
-              <span className="text-2xl">📄</span>
+              <div className="w-12 h-12 rounded-lg bg-red-500/10 border border-red-500/20 flex items-center justify-center text-2xl flex-shrink-0">
+                📄
+              </div>
             ) : (
               <img
                 src={invoicePreview}
-                alt="Receipt"
-                className="w-12 h-12 object-cover rounded shadow-sm flex-shrink-0"
+                alt="Receipt preview"
+                className="w-12 h-12 object-cover rounded-lg border shadow-sm flex-shrink-0"
+                style={{ borderColor: C.rule }}
               />
             )}
             <div className="min-w-0 flex-1">
-              <div className="text-xs font-semibold truncate" style={{ color: C.ink }}>
-                {invoiceFile.name}
+              <div className="text-xs font-bold truncate flex items-center gap-1.5" style={{ color: C.ink }}>
+                <span>📎 {invoiceFile.name}</span>
+                <span className="text-[10px] text-blue-500 font-semibold underline">👁️ Preview</span>
               </div>
               <div className="text-[10px]" style={{ color: C.faint }}>
-                {Math.round(invoiceFile.size / 1024)} KB · Verified attached
+                {Math.round(invoiceFile.size / 1024)} KB · Click to preview in full screen
               </div>
             </div>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleRemoveInvoice();
+              }}
+              className="px-2 py-1 text-xs text-red-500 hover:bg-red-500/10 rounded-lg"
+              title="Remove attachment"
+            >
+              ✕
+            </button>
           </div>
         ) : (
           <div>
@@ -824,17 +860,39 @@ function TxRow({
             </span>
           )}
 
-          {/* Invoice Badge & Direct Attach button */}
+          {/* Invoice Preview Thumbnail & Quick View */}
           {tx.invoice ? (
-            <button
-              onClick={() => onPreviewInvoice && onPreviewInvoice(tx.invoice, tx)}
-              className="text-[11px] px-2 py-0.5 rounded-full font-medium flex items-center gap-1 border transition-opacity hover:opacity-80"
-              style={{ background: "#2563EB15", borderColor: "#2563EB33", color: "#2563EB" }}
-              title="Click to view attached invoice"
-            >
-              <span>📎</span>
-              <span>Invoice</span>
-            </button>
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => onPreviewInvoice && onPreviewInvoice(tx.invoice, tx)}
+                className="group flex items-center gap-1.5 px-2 py-1 rounded-lg border text-xs font-medium transition-all hover:shadow-md hover:scale-[1.02]"
+                style={{
+                  background: C.card,
+                  borderColor: "#2563EB40",
+                  color: "#2563EB",
+                }}
+                title={`Preview attached invoice (${tx.invoice.fileName || "Receipt"})`}
+              >
+                {tx.invoice.thumbnail || (tx.invoice.fileData && !tx.invoice.fileType?.includes("pdf")) ? (
+                  <img
+                    src={tx.invoice.thumbnail || tx.invoice.fileData}
+                    alt="Receipt preview"
+                    className="w-7 h-7 rounded object-cover border border-blue-500/30 flex-shrink-0 group-hover:brightness-95"
+                  />
+                ) : (
+                  <span className="w-7 h-7 rounded flex items-center justify-center bg-blue-500/10 text-sm flex-shrink-0">
+                    {tx.invoice.fileType === "application/pdf" || tx.invoice.fileName?.endsWith(".pdf") ? "📄" : "🧾"}
+                  </span>
+                )}
+                <span className="flex items-center gap-1 text-[11px] font-semibold text-blue-600 dark:text-blue-400">
+                  <span>👁️ Preview</span>
+                  <span className="opacity-75 max-w-[80px] sm:max-w-[120px] truncate">
+                    {tx.invoice.fileName || "Invoice"}
+                  </span>
+                </span>
+              </button>
+            </div>
           ) : onAttachInvoice ? (
             <label
               className="text-[11px] px-2 py-0.5 rounded-full font-medium flex items-center gap-1 border border-dashed cursor-pointer opacity-70 hover:opacity-100 transition-opacity"
@@ -1098,6 +1156,7 @@ export default function DailyTrackerTab({
               creditCards={creditCards}
               goals={goals}
               bills={bills}
+              onPreviewInvoice={(inv) => setViewingInvoice(inv)}
             />
           </div>
         )}
@@ -1199,19 +1258,19 @@ export default function DailyTrackerTab({
                   <div className="text-2xl animate-spin mb-2">⏳</div>
                   <div className="text-xs">Loading receipt attachment…</div>
                 </div>
-              ) : viewingFileContent ? (
+              ) : (viewingFileContent || viewingInvoice.fileData || viewingInvoice.thumbnail) ? (
                 viewingInvoice.fileType === "application/pdf" || viewingInvoice.fileName?.endsWith(".pdf") ? (
                   <iframe
-                    src={viewingFileContent}
+                    src={viewingFileContent || viewingInvoice.fileData}
                     title="Invoice PDF"
                     className="w-full h-96 rounded-lg border"
                     style={{ borderColor: C.rule }}
                   />
                 ) : (
                   <img
-                    src={viewingFileContent}
+                    src={viewingFileContent || viewingInvoice.fileData || viewingInvoice.thumbnail}
                     alt={viewingInvoice.fileName}
-                    className="max-h-[60vh] max-w-full rounded-lg object-contain"
+                    className="max-h-[60vh] max-w-full rounded-lg object-contain shadow-md"
                   />
                 )
               ) : (
@@ -1235,9 +1294,9 @@ export default function DailyTrackerTab({
                     ✂️ Detach Receipt
                   </button>
                 )}
-                {viewingFileContent && (
+                {(viewingFileContent || viewingInvoice.fileData) && (
                   <a
-                    href={viewingFileContent}
+                    href={viewingFileContent || viewingInvoice.fileData}
                     download={viewingInvoice.fileName || "invoice"}
                     className="px-3 py-1 rounded-lg text-white font-bold"
                     style={{ background: "#2563EB" }}

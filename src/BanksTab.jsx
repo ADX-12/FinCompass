@@ -321,21 +321,71 @@ function CreditCardItem({ card, onEdit, onDelete, onGenerateStatement, C }) {
         </div>
 
         {/* Billing Dates Info */}
-        <div
-          className="rounded-xl p-2.5 text-xs flex items-center justify-between border"
-          style={{ background: C.paper, borderColor: C.rule }}
-        >
-          <div>
-            <span className="block text-[10px]" style={{ color: C.faint }}>Bill Generated:</span>
-            <span className="font-semibold" style={{ color: C.ink }}>{card.billDay || 15}th of every month</span>
-          </div>
-          <div className="text-right">
-            <span className="block text-[10px]" style={{ color: C.faint }}>Due Date:</span>
-            <span className="font-semibold text-emerald-600 dark:text-emerald-400">
-              +{card.dueDays || 20} days after bill
-            </span>
-          </div>
-        </div>
+        {(() => {
+          const today = new Date();
+          const bDay = Number(card.billDay) || 15;
+          const dDays = Number(card.dueDays) || 20;
+          const explicitDueDay = Number(card.dueDay);
+
+          const cYear = today.getFullYear();
+          const cMonth = today.getMonth();
+          const cDate = today.getDate();
+
+          let bDate;
+          if (cDate >= bDay) {
+            bDate = new Date(cYear, cMonth, bDay);
+          } else {
+            bDate = new Date(cYear, cMonth - 1, bDay);
+          }
+
+          let dDate;
+          if (explicitDueDay && explicitDueDay >= 1 && explicitDueDay <= 31) {
+            if (explicitDueDay > bDay) {
+              dDate = new Date(bDate.getFullYear(), bDate.getMonth(), explicitDueDay);
+            } else {
+              dDate = new Date(bDate.getFullYear(), bDate.getMonth() + 1, explicitDueDay);
+            }
+          } else {
+            dDate = new Date(bDate);
+            dDate.setDate(dDate.getDate() + dDays);
+          }
+
+          const msDiff = new Date(dDate).setHours(0,0,0,0) - new Date(today).setHours(0,0,0,0);
+          const daysLeft = Math.ceil(msDiff / (1000 * 60 * 60 * 24));
+          const formattedDueStr = dDate.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+
+          return (
+            <div
+              className="rounded-xl p-2.5 text-xs flex items-center justify-between border"
+              style={{ background: C.paper, borderColor: C.rule }}
+            >
+              <div>
+                <span className="block text-[10px]" style={{ color: C.faint }}>Bill Date:</span>
+                <span className="font-semibold" style={{ color: C.ink }}>{bDay}th of month</span>
+              </div>
+              <div className="text-right">
+                <div className="flex items-center justify-end gap-1">
+                  <span className="block text-[10px]" style={{ color: C.faint }}>Payment Due Date:</span>
+                  <button
+                    onClick={() => onEdit(card)}
+                    className="text-[10px] text-blue-500 hover:underline"
+                    title="Change Due Date"
+                  >
+                    ✏️
+                  </button>
+                </div>
+                <span className="font-bold text-emerald-600 dark:text-emerald-400">
+                  {formattedDueStr}
+                  {daysLeft >= 0 ? (
+                    <span className="text-[10px] ml-1 font-normal opacity-85">({daysLeft}d left)</span>
+                  ) : (
+                    <span className="text-[10px] ml-1 font-bold text-red-500">(Overdue)</span>
+                  )}
+                </span>
+              </div>
+            </div>
+          );
+        })()}
       </div>
 
       {/* Actions */}
@@ -379,6 +429,7 @@ function CreditCardForm({ initial, onSave, onCancel, C }) {
   const [currentOutstanding, setCurrentOutstanding] = useState(String(initial?.currentOutstanding ?? "0"));
   const [billDay, setBillDay] = useState(String(initial?.billDay ?? "15"));
   const [dueDays, setDueDays] = useState(String(initial?.dueDays ?? "20"));
+  const [dueDay, setDueDay] = useState(String(initial?.dueDay ?? ""));
   const [interestRatePct, setInterestRatePct] = useState(String(initial?.interestRatePct ?? "42"));
   const [colorTheme, setColorTheme] = useState(initial?.colorTheme || "navy");
 
@@ -394,6 +445,7 @@ function CreditCardForm({ initial, onSave, onCancel, C }) {
       currentOutstanding: Number(currentOutstanding) || 0,
       billDay: Math.min(31, Math.max(1, Number(billDay) || 15)),
       dueDays: Number(dueDays) || 20,
+      dueDay: dueDay ? Math.min(31, Math.max(1, Number(dueDay))) : null,
       interestRatePct: Number(interestRatePct) || 42,
       colorTheme,
       lastUpdated: new Date().toISOString(),
@@ -494,6 +546,30 @@ function CreditCardForm({ initial, onSave, onCancel, C }) {
         </label>
 
         <label className="block">
+          <span className="text-xs font-medium" style={{ color: C.muted }}>
+            Payment Due Day of Month (Optional, e.g. 3rd)
+          </span>
+          <input
+            type="number"
+            min="1"
+            max="31"
+            value={dueDay}
+            onChange={(e) => {
+              setDueDay(e.target.value);
+              if (e.target.value && billDay) {
+                const b = Number(billDay);
+                const d = Number(e.target.value);
+                const diff = d >= b ? d - b : (30 - b + d);
+                setDueDays(String(diff));
+              }
+            }}
+            placeholder="e.g. 3 (if due on 3rd of month)"
+            className="mt-1 w-full rounded-xl border px-3 py-2 text-sm font-semibold text-emerald-600 focus:outline-none"
+            style={{ borderColor: C.rule, background: C.card }}
+          />
+        </label>
+
+        <label className="block">
           <span className="text-xs font-medium" style={{ color: C.muted }}>Due Days After Bill Date (Grace Period)</span>
           <input
             type="number"
@@ -501,7 +577,15 @@ function CreditCardForm({ initial, onSave, onCancel, C }) {
             max="45"
             required
             value={dueDays}
-            onChange={(e) => setDueDays(e.target.value)}
+            onChange={(e) => {
+              setDueDays(e.target.value);
+              if (e.target.value && billDay) {
+                const b = Number(billDay);
+                const g = Number(e.target.value);
+                const calcDay = ((b + g - 1) % 30) + 1;
+                setDueDay(String(calcDay));
+              }
+            }}
             placeholder="e.g. 20 (typically 18-22 days)"
             className="mt-1 w-full rounded-xl border px-3 py-2 text-sm focus:outline-none"
             style={{ borderColor: C.rule, color: C.ink, background: C.card }}

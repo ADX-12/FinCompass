@@ -78,6 +78,7 @@ export default function InvoicesTab({
           fileType: tx.invoice.fileType || "application/pdf",
           fileSize: tx.invoice.fileSize || 0,
           fileData: tx.invoice.fileData,
+          thumbnail: tx.invoice.thumbnail || tx.invoice.fileData,
           isDirectlyLinked: true,
           tx,
         });
@@ -288,7 +289,7 @@ export default function InvoicesTab({
   }, [previewInvoice]);
 
   const handleDownload = async (inv) => {
-    let dataUrl = inv.fileData || (previewInvoice && previewInvoice.id === inv.id ? previewContent : null);
+    let dataUrl = inv.fileData || inv.thumbnail || (previewInvoice && previewInvoice.id === inv.id ? (previewContent || previewInvoice.fileData) : null);
     if (!dataUrl) {
       const cached = await getLocalInvoiceFile(inv.id || inv.txId);
       dataUrl = cached?.fileData;
@@ -1046,10 +1047,10 @@ export default function InvoicesTab({
                   <div className="text-xs font-semibold">Loading invoice file…</div>
                 </div>
               ) : previewInvoice.fileType === "application/pdf" || (previewInvoice.fileName || "").endsWith(".pdf") ? (
-                previewContent ? (
+                (previewContent || previewInvoice.fileData) ? (
                   <div className="w-full h-[65vh] flex flex-col items-center justify-center gap-4">
                     <iframe
-                      src={previewContent}
+                      src={previewContent || previewInvoice.fileData}
                       title={previewInvoice.description}
                       className="w-full h-full rounded-xl border shadow-sm"
                       style={{ borderColor: C.rule }}
@@ -1061,9 +1062,9 @@ export default function InvoicesTab({
                     PDF preview not available on this device.
                   </div>
                 )
-              ) : previewContent ? (
+              ) : (previewContent || previewInvoice.fileData || previewInvoice.thumbnail) ? (
                 <img
-                  src={previewContent}
+                  src={previewContent || previewInvoice.fileData || previewInvoice.thumbnail}
                   alt={previewInvoice.description}
                   className="max-h-[70vh] max-w-full rounded-xl shadow-lg object-contain"
                 />

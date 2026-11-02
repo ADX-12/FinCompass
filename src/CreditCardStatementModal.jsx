@@ -59,8 +59,18 @@ export default function CreditCardStatementModal({
       prevBillDate = new Date(currentYear - 2, currentMonth, 1);
     }
 
-    const dueDate = new Date(billDate);
-    dueDate.setDate(dueDate.getDate() + dueDays);
+    const explicitDueDay = Number(card.dueDay);
+    let dueDate;
+    if (explicitDueDay && explicitDueDay >= 1 && explicitDueDay <= 31) {
+      if (explicitDueDay > billDay) {
+        dueDate = new Date(billDate.getFullYear(), billDate.getMonth(), explicitDueDay);
+      } else {
+        dueDate = new Date(billDate.getFullYear(), billDate.getMonth() + 1, explicitDueDay);
+      }
+    } else {
+      dueDate = new Date(billDate);
+      dueDate.setDate(dueDate.getDate() + dueDays);
+    }
 
     const periodStartStr = toYMD(prevBillDate);
     const periodEndStr = toYMD(billDate);
@@ -78,7 +88,7 @@ export default function CreditCardStatementModal({
         ? "All Transactions Recorded"
         : `${prevBillDate.toLocaleDateString("en-IN", { day: "numeric", month: "short" })} – ${billDate.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}`,
     };
-  }, [card.billDay, card.dueDays, selectedCycle]);
+  }, [card.billDay, card.dueDays, card.dueDay, selectedCycle]);
 
   // Extract all transactions for this card within the billing period
   const statementTransactions = useMemo(() => {

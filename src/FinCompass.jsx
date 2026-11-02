@@ -1491,7 +1491,10 @@ function getUpcomingPayments(data, dailyLogs) {
     if (outstanding > 0) {
       const bDay = Number(cc.billDay) || 1;
       const dDays = Number(cc.dueDays) || 20;
-      const calculatedDueDay = ((bDay + dDays - 1) % daysInMonth) + 1;
+      const explicitDueDay = Number(cc.dueDay);
+      const calculatedDueDay = (explicitDueDay && explicitDueDay >= 1 && explicitDueDay <= 31)
+        ? explicitDueDay
+        : (((bDay + dDays - 1) % daysInMonth) + 1);
       const day = Math.min(calculatedDueDay, daysInMonth);
       const isPast = day < currentDay;
 
@@ -3816,6 +3819,7 @@ function FinCompassApp() {
       const invId = entry.invoice.id || "inv_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6);
       if (entry.invoice.fileData) {
         saveLocalInvoiceFile(invId, entry.invoice);
+        saveLocalInvoiceFile(entry.id, entry.invoice);
         saveInvoiceFile(invId, entry.invoice).catch(() => {});
       }
       const newInv = {
