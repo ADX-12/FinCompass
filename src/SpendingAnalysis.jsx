@@ -184,13 +184,16 @@ function BudgetCard({ cat, spent, onEditBudget, C }) {
             min="0"
             value={budgetInput}
             onChange={(e) => setBudgetInput(e.target.value)}
+            onBlur={handleSave}
             onKeyDown={(e) => { if (e.key === "Enter") handleSave(); if (e.key === "Escape") setEditing(false); }}
             className="flex-1 rounded-lg border px-2 py-1.5 text-sm font-semibold focus:outline-none focus:ring-1"
             style={{ borderColor: cat.color, color: C.ink, background: C.paper }}
           />
           <button
+            type="button"
+            onMouseDown={(e) => e.preventDefault()}
             onClick={handleSave}
-            className="rounded-lg px-3 py-1.5 text-xs font-bold text-white"
+            className="rounded-lg px-3 py-1.5 text-xs font-bold text-white transition-opacity hover:opacity-90"
             style={{ background: cat.color }}
           >
             Save

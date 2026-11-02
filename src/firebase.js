@@ -367,3 +367,36 @@ export async function deleteDailyEntry(dateStr, updatedLog) {
     throw e;
   }
 }
+
+/* ─── Categories & Budgets Cloud Sync ────────────────────────────── */
+
+export async function loadCategories() {
+  if (!FIREBASE_CONFIGURED || !db) return null;
+  try {
+    const uid = getCurrentUserId();
+    const snap = await getDoc(doc(db, "users", uid, "data", "categories"));
+    if (snap.exists()) {
+      const d = snap.data();
+      return Array.isArray(d?.categories) ? d.categories : null;
+    }
+    return null;
+  } catch (e) {
+    console.warn("Firestore loadCategories failed:", e);
+    throw e;
+  }
+}
+
+export async function saveCategoriesCloud(categories) {
+  if (!FIREBASE_CONFIGURED || !db) return;
+  try {
+    const uid = getCurrentUserId();
+    const cleanCats = sanitizeForFirestore(categories || []);
+    await setDoc(doc(db, "users", uid, "data", "categories"), {
+      categories: cleanCats,
+      updatedAt: serverTimestamp(),
+    });
+  } catch (e) {
+    console.error("Firestore saveCategoriesCloud failed:", e);
+    throw e;
+  }
+}

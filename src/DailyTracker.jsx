@@ -86,6 +86,7 @@ function TransactionForm({
   const [debtId, setDebtId] = useState("");
   const [investmentId, setInvestmentId] = useState("");
   const [billId, setBillId] = useState("");
+  const [creditCardPaymentId, setCreditCardPaymentId] = useState("");
   const [goalId, setGoalId] = useState("");
 
   // Invoice attachment state
@@ -97,15 +98,54 @@ function TransactionForm({
   const activeInvestments = investments || [];
   const activeGoals = goals || [];
   const activeBills = bills || [];
+
+  // Recurring options: combine custom monthly bills + credit cards with bills due
+  const recurringOptions = useMemo(() => {
+    const list = [];
+    (activeBills || []).forEach((b) => {
+      list.push({
+        id: b.id,
+        key: `bill_${b.id}`,
+        type: "bill",
+        rawId: b.id,
+        label: `📄 ${b.name} — ₹${Math.round(b.amount).toLocaleString("en-IN")}${b.paymentDay ? ` (Due ${b.paymentDay}th)` : ""}`,
+        amount: b.amount,
+        name: b.name,
+      });
+    });
+    (creditCards || []).forEach((cc) => {
+      const curOut = Number(cc.currentOutstanding) || 0;
+      const bDay = Number(cc.billDay) || 1;
+      const dDays = Number(cc.dueDays) || 20;
+      const dueDay = ((bDay + dDays - 1) % 30) + 1;
+      list.push({
+        id: `cc_bill_${cc.id}`,
+        key: `cc_bill_${cc.id}`,
+        type: "credit_card",
+        rawId: cc.id,
+        label: `💳 [Credit Card Bill] ${cc.name} — Due: ${inr(curOut)} (Due ~${dueDay}th)`,
+        amount: curOut,
+        name: cc.name,
+        card: cc,
+      });
+    });
+    return list;
+  }, [activeBills, creditCards]);
+
   const isEmi = catId === "emi";
   const isInvestment = catId === "investment";
-  const isBill = catId === "bills" || catId === "utilities" || catId === "rent";
+  const isBill = catId === "bills" || catId === "utilities" || catId === "rent" || Boolean(creditCardPaymentId);
   const isGoal = catId === "goals" || Boolean(goalId);
 
   // Selected goal details for live calculation preview
   const selectedGoal = useMemo(() => {
     return activeGoals.find((g) => g.id === goalId);
   }, [activeGoals, goalId]);
+
+  // Selected credit card being paid (bill payment)
+  const payingCard = useMemo(() => {
+    return (creditCards || []).find((c) => c.id === creditCardPaymentId);
+  }, [creditCards, creditCardPaymentId]);
 
   // Selected credit card details for live calculation preview
   const selectedCreditCard = useMemo(() => {
@@ -184,6 +224,7 @@ function TransactionForm({
     if (isEmi && debtId) entry.debtId = debtId;
     if (isInvestment && investmentId) entry.investmentId = investmentId;
     if (billId) entry.billId = billId;
+    if (creditCardPaymentId) entry.creditCardPaymentId = creditCardPaymentId;
 
     // Attach invoice if uploaded
     if (invoiceFile) {
@@ -202,6 +243,7 @@ function TransactionForm({
     setDebtId("");
     setInvestmentId("");
     setBillId("");
+    setCreditCardPaymentId("");
     setInvoiceFile(null);
     setInvoicePreview(null);
   };
@@ -418,34 +460,86 @@ function TransactionForm({
         </div>
       )}
 
-      {/* Bill — Recurring Bill picker */}
-      {(isBill || billId || (activeBills.length > 0 && !isEmi && !isInvestment)) && activeBills.length > 0 && (
+      {/* Bill — Recurring Bill picker (including Credit Card Bill Payments) */}
+      {(isBill || billId || creditCardPaymentId || (recurringOptions.length > 0 && !isEmi && !isInvestment)) && recurringOptions.length > 0 && (
         <div>
-          <label className="text-xs font-medium" style={{ color: C.muted }}>Link to Recurring Bill</label>
+          <label className="text-xs font-medium" style={{ color: C.muted }}>Link to Recurring Bill or Credit Card Bill</label>
           <select
             value={billId}
             onChange={(e) => {
               const val = e.target.value;
               setBillId(val);
-              const b = activeBills.find((x) => x.id === val);
-              if (b) {
-                if (b.amount > 0) setAmount(String(b.amount));
-                if (!note || note.startsWith("Bill:")) setNote(`Bill: ${b.name}`);
+              const matched = recurringOptions.find((x) => x.id === val || x.key === val);
+              if (matched) {
+                if (matched.type === "credit_card") {
+                  setCreditCardPaymentId(matched.rawId);
+                  if (matched.amount > 0) setAmount(String(matched.amount));
+                  if (!note || note.startsWith("Bill:") || note.startsWith("Credit Card Bill:")) {
+                    setNote(`Credit Card Bill: ${matched.name}`);
+                  }
+                  setCatId("bills");
+                } else {
+                  setCreditCardPaymentId("");
+                  if (matched.amount > 0) setAmount(String(matched.amount));
+                  if (!note || note.startsWith("Bill:") || note.startsWith("Credit Card Bill:")) {
+                    setNote(`Bill: ${matched.name}`);
+                  }
+                }
+              } else {
+                setCreditCardPaymentId("");
               }
             }}
             className="mt-1 w-full rounded-xl border px-3 py-2 text-sm focus:outline-none"
-            style={{ borderColor: "#EAB308", color: C.ink, background: C.card }}
+            style={{ borderColor: payingCard ? "#3B82F6" : "#EAB308", color: C.ink, background: C.card }}
           >
             <option value="" style={{ background: C.card }}>— Don't link to a bill (or select one) —</option>
-            {activeBills.map((b) => (
-              <option key={b.id} value={b.id} style={{ background: C.card }}>
-                {b.name} — ₹{Math.round(b.amount).toLocaleString("en-IN")}{b.paymentDay ? ` (Due ${b.paymentDay}th)` : ""}
+            {recurringOptions.map((opt) => (
+              <option key={opt.key || opt.id} value={opt.id} style={{ background: C.card }}>
+                {opt.label}
               </option>
             ))}
           </select>
-          {billId && (
+
+          {/* Regular bill confirmation message */}
+          {billId && !payingCard && (
             <div className="mt-1.5 text-xs rounded-lg px-3 py-2" style={{ background: "#EAB30815", color: "#CA8A04" }}>
-              ✅ This payment marks "{activeBills.find((b) => b.id === billId)?.name}" as paid for this month in Payments This Month
+              ✅ This payment marks "{recurringOptions.find((b) => b.id === billId)?.name || "Bill"}" as paid for this month in Payments This Month
+            </div>
+          )}
+
+          {/* Credit Card bill live calculation box */}
+          {payingCard && (
+            <div
+              className="mt-2 text-xs rounded-xl p-3 border space-y-1.5"
+              style={{ background: "#3B82F610", borderColor: "#3B82F640", color: "#3B82F6" }}
+            >
+              <div className="font-bold flex items-center justify-between">
+                <span>💳 Paying Credit Card Bill: {payingCard.name}</span>
+                <span className="font-mono text-xs px-2 py-0.5 rounded-full" style={{ background: "#3B82F620" }}>
+                  Current Outstanding: {inr(payingCard.currentOutstanding || 0)}
+                </span>
+              </div>
+              {amount && parseFloat(amount) > 0 ? (
+                <div className="text-xs pt-1.5 border-t" style={{ borderColor: "#3B82F630" }}>
+                  {parseFloat(amount) >= (payingCard.currentOutstanding || 0) ? (
+                    <p className="font-semibold text-emerald-500">
+                      ✅ Outstanding balance will become <strong className="font-mono">₹0</strong> (Paid in full! Available limit fully restored to {inr(payingCard.totalLimit || 0)}).
+                    </p>
+                  ) : (
+                    <p>
+                      Remaining outstanding after payment:{" "}
+                      <strong className="font-mono text-amber-500">
+                        {inr(Math.max(0, (payingCard.currentOutstanding || 0) - parseFloat(amount)))}
+                      </strong>{" "}
+                      (Reduced by {inr(parseFloat(amount))}).
+                    </p>
+                  )}
+                </div>
+              ) : (
+                <p className="text-xs opacity-80">
+                  Enter payment amount above to automatically clear outstanding to ₹0 or calculate remainder.
+                </p>
+              )}
             </div>
           )}
         </div>
@@ -643,11 +737,14 @@ function TxRow({
 
   // Resolve account or card name
   const linkedCard = (creditCards || []).find((c) => c.id === tx.accountId || c.id === tx.creditCardId);
+  const linkedCreditCardPayment = (creditCards || []).find(
+    (c) => c.id === tx.creditCardPaymentId || tx.billId === `cc_bill_${c.id}`
+  );
   const linkedBank = (banks || []).find((b) => b.id === tx.accountId);
   const linkedGoal = (goals || []).find((g) => g.id === tx.goalId);
   const linkedDebt = (debts || []).find((d) => d.id === tx.debtId);
   const linkedInv = (investments || []).find((inv) => inv.id === tx.investmentId);
-  const linkedBill = (bills || []).find((b) => b.id === tx.billId);
+  const linkedBill = (bills || []).find((b) => b.id === tx.billId || `bill_${b.id}` === tx.billId);
 
   let accountBadge = null;
   if (linkedCard) {
@@ -717,6 +814,13 @@ function TxRow({
           {linkedBill && (
             <span className="text-xs px-1.5 py-0.5 rounded-full font-medium" style={{ background: "#EAB30815", color: "#CA8A04" }}>
               📄 Bill: {linkedBill.name}
+            </span>
+          )}
+
+          {/* Linked Credit Card Bill Payment Badge */}
+          {linkedCreditCardPayment && (
+            <span className="text-xs px-1.5 py-0.5 rounded-full font-medium" style={{ background: "#3B82F618", color: "#3B82F6" }}>
+              💳 Paid CC Bill: {linkedCreditCardPayment.name}
             </span>
           )}
 

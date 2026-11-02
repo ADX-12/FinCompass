@@ -22,6 +22,8 @@ import {
   deleteDailyEntry,
   saveInvoiceFile,
   deleteInvoiceFile,
+  loadCategories,
+  saveCategoriesCloud,
 } from "./firebase";
 import { saveLocalInvoiceFile, deleteLocalInvoiceFile } from "./fileStorage";
 import {
@@ -1346,6 +1348,7 @@ function ChartTip({ active, payload, label, formatter }) {
 const BILL_CATEGORIES = [
   { value: "rent", label: "Rent" },
   { value: "utilities", label: "Utilities (Electricity, Water, Gas)" },
+  { value: "credit_card", label: "Credit Card Bill" },
   { value: "subscriptions", label: "Subscriptions (OTT, SaaS)" },
   { value: "insurance", label: "Insurance Premium" },
   { value: "phone", label: "Phone / Internet" },
@@ -1366,6 +1369,7 @@ function getUpcomingPayments(data, dailyLogs) {
   const paidDebtIds = new Set();
   const paidInvestmentIds = new Set();
   const paidBillIds = new Set();
+  const paidCreditCardIds = new Set();
   const paidBillAmounts = new Map(); // name -> total paid amount
 
   Object.keys(dailyLogs || {}).forEach((dateStr) => {
@@ -1374,6 +1378,7 @@ function getUpcomingPayments(data, dailyLogs) {
       if (e.debtId) paidDebtIds.add(e.debtId);
       if (e.investmentId) paidInvestmentIds.add(e.investmentId);
       if (e.billId) paidBillIds.add(e.billId);
+      if (e.creditCardPaymentId) paidCreditCardIds.add(e.creditCardPaymentId);
       // For bills, track by matching amount in similar categories
       if (e.type !== "credit" && e.amount > 0) {
         const key = (e.note || e.catId || "").toLowerCase();
@@ -1458,6 +1463,53 @@ function getUpcomingPayments(data, dailyLogs) {
         day,
         type: "bill",
         emoji: "📄",
+        isPast,
+        isToday: day === currentDay,
+        isPaid,
+        status: isPaid ? "paid" : isPast ? "overdue" : day === currentDay ? "due_today" : "upcoming",
+      });
+    }
+  });
+
+  // Credit Card Bill Payments (recurring monthly bills for credit cards with outstanding balances)
+  (data.creditCards || []).forEach((cc) => {
+    const outstanding = Number(cc.currentOutstanding) || 0;
+    if (outstanding > 0) {
+      const bDay = Number(cc.billDay) || 1;
+      const dDays = Number(cc.dueDays) || 20;
+      const calculatedDueDay = ((bDay + dDays - 1) % daysInMonth) + 1;
+      const day = Math.min(calculatedDueDay, daysInMonth);
+      const isPast = day < currentDay;
+
+      // Check if paid in this month's logs
+      let isPaid = paidCreditCardIds.has(cc.id) || paidBillIds.has(`cc_bill_${cc.id}`);
+      if (!isPaid) {
+        const cardNameLower = (cc.name || "").toLowerCase();
+        Object.keys(dailyLogs || {}).forEach((dateStr) => {
+          if (!dateStr.startsWith(monthStr)) return;
+          (dailyLogs[dateStr]?.entries || []).forEach((e) => {
+            if (
+              e.creditCardPaymentId === cc.id ||
+              e.billId === `cc_bill_${cc.id}` ||
+              (e.type !== "credit" &&
+                (e.note || "").toLowerCase().includes(cardNameLower) &&
+                (e.catId === "bills" || e.creditCardPaymentId))
+            ) {
+              isPaid = true;
+            }
+          });
+        });
+      }
+
+      payments.push({
+        id: `cc_bill_${cc.id}`,
+        rawId: cc.id,
+        targetType: "credit_card",
+        name: `${cc.name} Bill`,
+        amount: outstanding,
+        day,
+        type: "credit_card",
+        emoji: "💳",
         isPast,
         isToday: day === currentDay,
         isPaid,
@@ -3287,6 +3339,7 @@ function FinCompassApp() {
 
   const saveCategories = useCallback((cats) => {
     try { localStorage.setItem("fincompass_categories_v1", JSON.stringify(cats)); } catch {}
+    saveCategoriesCloud(cats).catch((err) => console.warn("Cloud saveCategories failed:", err));
   }, []);
 
   const handleEditBudget = useCallback((catId, budget) => {
@@ -3381,8 +3434,8 @@ function FinCompassApp() {
     setSyncStatus("syncing");
     // Block saves while loading so we don't overwrite cloud data with local state
     isLoadingData.current = true;
-    Promise.all([loadUserData(), loadBanks(), loadDailyLogs()])
-      .then(([userData, banksData, logsData]) => {
+    Promise.all([loadUserData(), loadBanks(), loadDailyLogs(), loadCategories()])
+      .then(([userData, banksData, logsData, categoriesData]) => {
         if (userData) {
           setData({
             ...BLANK_TEMPLATE,
@@ -3470,6 +3523,30 @@ function FinCompassApp() {
             });
           } else {
             setDailyLogsRaw({});
+          }
+        }
+        // Categories & Budgets Cloud Sync
+        if (categoriesData && Array.isArray(categoriesData) && categoriesData.length > 0) {
+          const existingIds = new Set(categoriesData.map((c) => c.id));
+          const missing = DEFAULT_CATEGORIES.filter((dc) => !existingIds.has(dc.id));
+          const merged = missing.length > 0 ? [...categoriesData, ...missing] : categoriesData;
+          setCategoriesRaw(merged);
+          try { localStorage.setItem("fincompass_categories_v1", JSON.stringify(merged)); } catch {}
+        } else {
+          let localCats = null;
+          try {
+            const saved = localStorage.getItem("fincompass_categories_v1");
+            if (saved) localCats = JSON.parse(saved);
+          } catch {}
+          if (Array.isArray(localCats) && localCats.length > 0) {
+            const existingIds = new Set(localCats.map((c) => c.id));
+            const missing = DEFAULT_CATEGORIES.filter((dc) => !existingIds.has(dc.id));
+            const merged = missing.length > 0 ? [...localCats, ...missing] : localCats;
+            setCategoriesRaw(merged);
+            saveCategoriesCloud(merged).catch(() => {});
+          } else {
+            setCategoriesRaw(DEFAULT_CATEGORIES);
+            saveCategoriesCloud(DEFAULT_CATEGORIES).catch(() => {});
           }
         }
         setSyncStatus("synced");
@@ -3659,26 +3736,46 @@ function FinCompassApp() {
       }
     }
 
-    // Live calculation for Credit Card (Debit adds to spent balance; Credit pays/reduces spent balance)
-    const cardId = entry.creditCardId || entry.accountId;
-    if (cardId) {
+    // Live calculation for Credit Card:
+    // Case 1: Credit Card Bill Payment (Paying the bill reduces outstanding balance to 0 or calculated amount)
+    if (entry.creditCardPaymentId) {
       setData((prev) => {
         const cards = prev.creditCards || [];
-        if (!cards.some((c) => c.id === cardId)) return prev;
+        if (!cards.some((c) => c.id === entry.creditCardPaymentId)) return prev;
         return {
           ...prev,
           creditCards: cards.map((c) => {
-            if (c.id === cardId) {
+            if (c.id === entry.creditCardPaymentId) {
               const curOut = Number(c.currentOutstanding) || 0;
-              const newOut = entry.type === "debit"
-                ? curOut + entry.amount
-                : Math.max(0, curOut - entry.amount);
+              const newOut = Math.max(0, curOut - entry.amount);
               return { ...c, currentOutstanding: newOut };
             }
             return c;
           }),
         };
       });
+    } else {
+      // Case 2: Regular Credit Card purchase / refund
+      const cardId = entry.creditCardId || entry.accountId;
+      if (cardId) {
+        setData((prev) => {
+          const cards = prev.creditCards || [];
+          if (!cards.some((c) => c.id === cardId)) return prev;
+          return {
+            ...prev,
+            creditCards: cards.map((c) => {
+              if (c.id === cardId) {
+                const curOut = Number(c.currentOutstanding) || 0;
+                const newOut = entry.type === "debit"
+                  ? curOut + entry.amount
+                  : Math.max(0, curOut - entry.amount);
+                return { ...c, currentOutstanding: newOut };
+              }
+              return c;
+            }),
+          };
+        });
+      }
     }
 
     // Bi-directional live sync for Financial Goals:
@@ -3794,25 +3891,43 @@ function FinCompassApp() {
     }
 
     // Revert Credit Card balance if linked
-    const delCardId = target?.creditCardId || target?.accountId;
-    if (target && delCardId) {
+    if (target && target.creditCardPaymentId) {
+      // Revert Credit Card Bill Payment (restores outstanding balance)
       setData((prev) => {
         const cards = prev.creditCards || [];
-        if (!cards.some((c) => c.id === delCardId)) return prev;
+        if (!cards.some((c) => c.id === target.creditCardPaymentId)) return prev;
         return {
           ...prev,
           creditCards: cards.map((c) => {
-            if (c.id === delCardId) {
+            if (c.id === target.creditCardPaymentId) {
               const curOut = Number(c.currentOutstanding) || 0;
-              const revertedOut = target.type === "debit"
-                ? Math.max(0, curOut - target.amount)
-                : curOut + target.amount;
-              return { ...c, currentOutstanding: revertedOut };
+              return { ...c, currentOutstanding: curOut + target.amount };
             }
             return c;
           }),
         };
       });
+    } else {
+      const delCardId = target?.creditCardId || target?.accountId;
+      if (target && delCardId) {
+        setData((prev) => {
+          const cards = prev.creditCards || [];
+          if (!cards.some((c) => c.id === delCardId)) return prev;
+          return {
+            ...prev,
+            creditCards: cards.map((c) => {
+              if (c.id === delCardId) {
+                const curOut = Number(c.currentOutstanding) || 0;
+                const revertedOut = target.type === "debit"
+                  ? Math.max(0, curOut - target.amount)
+                  : curOut + target.amount;
+                return { ...c, currentOutstanding: revertedOut };
+              }
+              return c;
+            }),
+          };
+        });
+      }
     }
 
     // Revert Goal savings if linked
@@ -3931,7 +4046,7 @@ function FinCompassApp() {
     if (!payment) return;
     const today = new Date().toISOString().slice(0, 10);
     const catId = payment.type === "emi" ? "emi" : payment.type === "sip" ? "investment" : "bills";
-    const notePrefix = payment.type === "emi" ? "EMI" : payment.type === "sip" ? "SIP" : "Bill";
+    const notePrefix = payment.type === "emi" ? "EMI" : payment.type === "sip" ? "SIP" : payment.type === "credit_card" ? "Credit Card Bill" : "Bill";
     const tx = {
       id: "tx_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6),
       time: new Date().toISOString(),
@@ -3948,6 +4063,9 @@ function FinCompassApp() {
       tx.investmentId = payment.rawId;
     } else if (payment.type === "bill" && payment.rawId) {
       tx.billId = payment.rawId;
+    } else if (payment.type === "credit_card" && payment.rawId) {
+      tx.creditCardPaymentId = payment.rawId;
+      tx.billId = `cc_bill_${payment.rawId}`;
     }
     handleAddEntry(today, tx);
   }, [handleAddEntry, banks, cash]);
