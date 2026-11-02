@@ -10,7 +10,7 @@ export default function CreditCardStatementModal({
   onClose,
   C,
 }) {
-  const [selectedCycle, setSelectedCycle] = useState("current"); // "current" | "previous"
+  const [selectedCycle, setSelectedCycle] = useState("unbilled"); // "unbilled" | "current" | "previous" | "all"
 
   // Derive statement dates based on card.billDay (1-31)
   const statementMeta = useMemo(() => {
@@ -18,41 +18,54 @@ export default function CreditCardStatementModal({
     const billDay = Number(card.billDay) || 15;
     const dueDays = Number(card.dueDays) || 20;
 
+    const pad = (n) => String(n).padStart(2, "0");
+    const toYMD = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+
     let billDate, prevBillDate;
+    const currentYear = today.getFullYear();
+    const currentMonth = today.getMonth(); // 0-indexed
+    const todayDate = today.getDate();
 
-    if (selectedCycle === "current") {
-      // Bill generated this month (or previous month if today < billDay)
-      const currentYear = today.getFullYear();
-      const currentMonth = today.getMonth(); // 0-indexed
-
-      if (today.getDate() >= billDay) {
+    if (selectedCycle === "unbilled") {
+      // Unbilled / Current in-progress cycle (from last bill date until today / next bill)
+      if (todayDate >= billDay) {
+        prevBillDate = new Date(currentYear, currentMonth, billDay);
+        billDate = new Date(currentYear, currentMonth + 1, billDay);
+      } else {
+        prevBillDate = new Date(currentYear, currentMonth - 1, billDay);
+        billDate = new Date(currentYear, currentMonth, billDay);
+      }
+    } else if (selectedCycle === "current") {
+      // Last generated bill
+      if (todayDate >= billDay) {
         billDate = new Date(currentYear, currentMonth, billDay);
         prevBillDate = new Date(currentYear, currentMonth - 1, billDay);
       } else {
         billDate = new Date(currentYear, currentMonth - 1, billDay);
         prevBillDate = new Date(currentYear, currentMonth - 2, billDay);
       }
-    } else {
-      // Previous cycle
-      const currentYear = today.getFullYear();
-      const currentMonth = today.getMonth();
-
-      if (today.getDate() >= billDay) {
+    } else if (selectedCycle === "previous") {
+      // Prior statement
+      if (todayDate >= billDay) {
         billDate = new Date(currentYear, currentMonth - 1, billDay);
         prevBillDate = new Date(currentYear, currentMonth - 2, billDay);
       } else {
         billDate = new Date(currentYear, currentMonth - 2, billDay);
         prevBillDate = new Date(currentYear, currentMonth - 3, billDay);
       }
+    } else {
+      // "all"
+      billDate = new Date(currentYear, currentMonth, todayDate);
+      prevBillDate = new Date(currentYear - 2, currentMonth, 1);
     }
 
     const dueDate = new Date(billDate);
     dueDate.setDate(dueDate.getDate() + dueDays);
 
-    const periodStartStr = prevBillDate.toISOString().slice(0, 10);
-    const periodEndStr = billDate.toISOString().slice(0, 10);
-    const billDateStr = billDate.toISOString().slice(0, 10);
-    const dueDateStr = dueDate.toISOString().slice(0, 10);
+    const periodStartStr = toYMD(prevBillDate);
+    const periodEndStr = toYMD(billDate);
+    const billDateStr = toYMD(billDate);
+    const dueDateStr = toYMD(dueDate);
 
     return {
       billDate: billDateStr,
@@ -61,7 +74,9 @@ export default function CreditCardStatementModal({
       periodEnd: periodEndStr,
       formattedBillDate: billDate.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }),
       formattedDueDate: dueDate.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }),
-      formattedPeriod: `${prevBillDate.toLocaleDateString("en-IN", { day: "numeric", month: "short" })} – ${billDate.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}`,
+      formattedPeriod: selectedCycle === "all"
+        ? "All Transactions Recorded"
+        : `${prevBillDate.toLocaleDateString("en-IN", { day: "numeric", month: "short" })} – ${billDate.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}`,
     };
   }, [card.billDay, card.dueDays, selectedCycle]);
 
@@ -70,16 +85,28 @@ export default function CreditCardStatementModal({
     const txs = [];
     if (!dailyLogs) return txs;
 
+    const cardNameLower = (card.name || "").toLowerCase();
+    const cardBankLower = (card.bank || "").toLowerCase();
+
     Object.keys(dailyLogs).forEach((dateStr) => {
-      // Check if date falls in statement period (periodStart <= date <= periodEnd)
-      if (dateStr >= statementMeta.periodStart && dateStr <= statementMeta.periodEnd) {
+      // Check if date falls in statement period (periodStart <= date <= periodEnd) or all
+      const inPeriod = selectedCycle === "all" || (dateStr >= statementMeta.periodStart && dateStr <= statementMeta.periodEnd);
+      if (inPeriod) {
         const entries = dailyLogs[dateStr]?.entries || [];
         entries.forEach((entry) => {
-          if (
+          const entryNoteLower = (entry.note || "").toLowerCase();
+          const isDirectCardTx =
             entry.accountId === card.id ||
             entry.creditCardId === card.id ||
-            (entry.method === "card" && entry.accountId === card.id)
-          ) {
+            entry.creditCardPaymentId === card.id ||
+            (entry.method === "card" && entry.accountId === card.id);
+
+          // Name/note matching fallback
+          const isNoteMatch =
+            (entry.catId === "credit_card" || entryNoteLower.includes("credit card") || entryNoteLower.includes("card bill")) &&
+            ((cardNameLower && entryNoteLower.includes(cardNameLower)) || (cardBankLower && entryNoteLower.includes(cardBankLower)));
+
+          if (isDirectCardTx || isNoteMatch) {
             txs.push({
               ...entry,
               dateStr,
@@ -91,7 +118,7 @@ export default function CreditCardStatementModal({
 
     // Sort chronologically
     return txs.sort((a, b) => a.dateStr.localeCompare(b.dateStr) || (a.time || "").localeCompare(b.time || ""));
-  }, [dailyLogs, card.id, statementMeta]);
+  }, [dailyLogs, card.id, card.name, card.bank, statementMeta, selectedCycle]);
 
   // Calculations for statement
   const totalDebits = statementTransactions
@@ -171,8 +198,10 @@ export default function CreditCardStatementModal({
               className="text-xs font-semibold px-3 py-1.5 rounded-lg border focus:outline-none"
               style={{ background: C.card, borderColor: C.rule, color: C.ink }}
             >
-              <option value="current">Current Cycle ({statementMeta.formattedBillDate})</option>
-              <option value="previous">Previous Cycle</option>
+              <option value="unbilled">⚡ Current / Unbilled Activity (Latest)</option>
+              <option value="current">📄 Last Statement ({statementMeta.formattedBillDate})</option>
+              <option value="previous">📜 Previous Statement</option>
+              <option value="all">🔍 All Card Transactions</option>
             </select>
 
             <button
@@ -341,10 +370,28 @@ export default function CreditCardStatementModal({
                   {statementTransactions.length === 0 ? (
                     <tr>
                       <td colSpan="4" className="py-8 text-center" style={{ color: C.muted }}>
-                        No transactions recorded for this card in this billing cycle.
+                        <div>No transactions recorded for this card in this billing cycle.</div>
                         <div className="text-[11px] mt-1" style={{ color: C.faint }}>
                           Current outstanding on file: {inr(card.currentOutstanding || 0)}
                         </div>
+                        {selectedCycle !== "all" && (
+                          <div className="mt-3 flex items-center justify-center gap-2">
+                            <button
+                              onClick={() => setSelectedCycle("unbilled")}
+                              className="px-3 py-1 rounded-lg text-xs font-semibold border"
+                              style={{ borderColor: C.rule, color: C.ink, background: C.card }}
+                            >
+                              ⚡ View Current / Unbilled Activity
+                            </button>
+                            <button
+                              onClick={() => setSelectedCycle("all")}
+                              className="px-3 py-1 rounded-lg text-xs font-semibold border"
+                              style={{ borderColor: C.rule, color: C.ink, background: C.card }}
+                            >
+                              🔍 View All Transactions
+                            </button>
+                          </div>
+                        )}
                       </td>
                     </tr>
                   ) : (
