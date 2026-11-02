@@ -110,13 +110,13 @@ function BSGroup({ title, total, color, children, C }) {
 }
 
 /* ─── Monthly Report Component ───────────────────────────────────── */
-function MonthlyReport({ data, profile, dailyLogs, categories, C }) {
+function MonthlyReport({ data, profile, dailyLogs, categories, banks = [], cash = 0, C }) {
   const currentMonthStr = new Date().toISOString().slice(0, 7);
 
   // Pull this month's transactions from dailyLogs
   const monthEntries = useMemo(() => {
     const all = [];
-    Object.keys(dailyLogs).forEach((d) => {
+    Object.keys(dailyLogs || {}).forEach((d) => {
       if (d.startsWith(currentMonthStr)) {
         (dailyLogs[d]?.entries || []).forEach((e) => all.push({ ...e, date: d }));
       }
@@ -128,6 +128,159 @@ function MonthlyReport({ data, profile, dailyLogs, categories, C }) {
     monthEntries.filter((e) => e.type === "credit").reduce((s, e) => s + e.amount, 0), [monthEntries]);
   const trackedDebits = useMemo(() =>
     monthEntries.filter((e) => e.type !== "credit").reduce((s, e) => s + e.amount, 0), [monthEntries]);
+
+  // Dynamic Monthly Obligations (Bills, Liabilities/EMIs, Credit Cards, Recurring Deposits)
+  const obligationsSummary = useMemo(() => {
+    const items = [];
+
+    // 1. Recurring Bills (Rent, Utilities, Subscriptions, Insurance, etc.)
+    (data.bills || []).forEach((b) => {
+      if ((b.amount || 0) <= 0) return;
+      const bName = (b.name || "").toLowerCase();
+      // Calculate paid this month by billId, or by note matching bill name/category
+      const paid = monthEntries
+        .filter((e) => e.type !== "credit")
+        .filter((e) => {
+          if (e.billId && e.billId === b.id) return true;
+          const note = (e.note || "").toLowerCase();
+          return bName && (note.includes(bName) || (b.category && note.includes(b.category.toLowerCase())));
+        })
+        .reduce((sum, e) => sum + e.amount, 0);
+
+      const due = b.amount || 0;
+      const remaining = Math.max(0, due - paid);
+      items.push({
+        id: `bill_${b.id}`,
+        name: b.name || "Recurring Bill",
+        category: "Recurring Bill",
+        emoji: "📄",
+        due,
+        paid,
+        remaining,
+        isCleared: remaining === 0,
+      });
+    });
+
+    // 2. Loan EMIs / Debt Payments
+    (data.debts || []).forEach((d) => {
+      if ((d.outstanding || 0) <= 0 && (d.emi || 0) <= 0) return;
+      const dName = (d.name || "").toLowerCase();
+      const paid = monthEntries
+        .filter((e) => e.type !== "credit")
+        .filter((e) => {
+          if (e.debtId && e.debtId === d.id) return true;
+          const note = (e.note || "").toLowerCase();
+          return (e.catId === "emi" || note.includes("emi") || note.includes("loan")) &&
+            (note.includes(dName) || (data.debts.length === 1));
+        })
+        .reduce((sum, e) => sum + e.amount, 0);
+
+      const due = d.emi || 0;
+      const remaining = Math.max(0, due - paid);
+      items.push({
+        id: `debt_${d.id}`,
+        name: d.name || "Loan EMI",
+        category: "Loan / Liability",
+        emoji: "🏦",
+        due,
+        paid,
+        remaining,
+        isCleared: remaining === 0,
+      });
+    });
+
+    // 3. Credit Card Bills
+    (data.creditCards || []).forEach((c) => {
+      const cardName = `${c.bank || ""} ${c.name || "Credit Card"}`.trim();
+      const paid = monthEntries
+        .filter((e) => e.type !== "credit")
+        .filter((e) => {
+          if (e.creditCardPaymentId && e.creditCardPaymentId === c.id) return true;
+          const note = (e.note || "").toLowerCase();
+          return (e.catId === "credit_card" || note.includes("credit card") || note.includes("cc bill")) &&
+            ((c.name && note.includes(c.name.toLowerCase())) || (c.bank && note.includes(c.bank.toLowerCase())) || (data.creditCards.length === 1));
+        })
+        .reduce((sum, e) => sum + e.amount, 0);
+
+      const out = Number(c.currentOutstanding) || 0;
+      // Total monthly due is current outstanding + what was already paid this month
+      const due = out + paid;
+      if (due > 0) {
+        items.push({
+          id: `cc_${c.id}`,
+          name: cardName,
+          category: "Credit Card Bill",
+          emoji: "💳",
+          due,
+          paid,
+          remaining: out,
+          isCleared: out === 0,
+        });
+      }
+    });
+
+    // 4. Recurring Deposits (RD) & Systematic Investments
+    const rdSavings = Number(data.savings?.recurringDeposits) || 0;
+    const rdPaid = monthEntries
+      .filter((e) => e.type !== "credit")
+      .filter((e) => {
+        const note = (e.note || "").toLowerCase();
+        return e.isRecurringDeposit || e.billId === "rd" ||
+          (e.catId === "investment" && (note.includes("recurring deposit") || note.includes(" rd") || note.startsWith("rd"))) ||
+          note.includes("recurring deposit");
+      })
+      .reduce((sum, e) => sum + e.amount, 0);
+
+    if (rdSavings > 0 || rdPaid > 0) {
+      // If user has recorded RD savings or paid towards it, show monthly RD tracking
+      const monthlyRdTarget = rdPaid > 0 ? rdPaid : rdSavings;
+      items.push({
+        id: "savings_rd",
+        name: "Recurring Deposit (RD)",
+        category: "Recurring Deposit",
+        emoji: "💰",
+        due: monthlyRdTarget,
+        paid: rdPaid,
+        remaining: Math.max(0, monthlyRdTarget - rdPaid),
+        isCleared: rdPaid >= monthlyRdTarget,
+      });
+    }
+
+    // 5. SIP Investments
+    (data.investments || []).forEach((inv) => {
+      if ((inv.monthlyContribution || 0) <= 0) return;
+      const invName = (inv.name || "").toLowerCase();
+      const paid = monthEntries
+        .filter((e) => e.type !== "credit")
+        .filter((e) => {
+          if (e.investmentId && e.investmentId === inv.id) return true;
+          const note = (e.note || "").toLowerCase();
+          return (e.catId === "investment" || note.includes("sip") || note.includes("mutual fund")) &&
+            (note.includes(invName) || (data.investments.length === 1));
+        })
+        .reduce((sum, e) => sum + e.amount, 0);
+
+      const due = inv.monthlyContribution || 0;
+      const remaining = Math.max(0, due - paid);
+      items.push({
+        id: `sip_${inv.id}`,
+        name: inv.name || "SIP Investment",
+        category: "Investment / SIP",
+        emoji: "📈",
+        due,
+        paid,
+        remaining,
+        isCleared: remaining === 0,
+      });
+    });
+
+    const totalDue = items.reduce((s, x) => s + x.due, 0);
+    const totalPaid = items.reduce((s, x) => s + x.paid, 0);
+    const totalRemaining = items.reduce((s, x) => s + x.remaining, 0);
+    const percentCleared = totalDue > 0 ? Math.min(100, (totalPaid / totalDue) * 100) : 100;
+
+    return { items, totalDue, totalPaid, totalRemaining, percentCleared };
+  }, [data.bills, data.debts, data.creditCards, data.savings, data.investments, monthEntries]);
 
   // Monthly income from profile
   const income = profile.income;
@@ -215,6 +368,126 @@ function MonthlyReport({ data, profile, dailyLogs, categories, C }) {
         <Tile label="Tracked Debits" value={inrS(trackedDebits)} icon="💸" color="#F87171" sub="from daily log" C={C} />
         <Tile label="Tracked Credits" value={inrS(trackedCredits)} icon="💰" color="#34D399" sub="from daily log" C={C} />
       </div>
+
+      {/* Dynamic Monthly Obligations (Live Reduction on Bill / Debt / RD Payments) */}
+      {obligationsSummary.items.length > 0 && (
+        <div className="rounded-2xl p-5" style={{ background: C.card, border: `1.5px solid ${C.rule}` }}>
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-xl">⚡</span>
+                <h2 className="text-base font-bold" style={{ color: C.ink }}>
+                  Monthly Obligations & Bill Payments
+                </h2>
+                <span className="px-2 py-0.5 rounded-full text-xs font-semibold" style={{ background: "#34D39922", color: "#34D399" }}>
+                  Live Dynamic
+                </span>
+              </div>
+              <p className="text-xs mt-0.5" style={{ color: C.muted }}>
+                Automatically reduces as you log bill, EMI, credit card, and recurring deposit payments
+              </p>
+            </div>
+            <div className="text-right">
+              <div className="text-xs font-medium" style={{ color: C.muted }}>Remaining Due This Month</div>
+              <div className="text-xl font-black" style={{ ...NUM, color: obligationsSummary.totalRemaining === 0 ? "#34D399" : "#F87171" }}>
+                {inr(obligationsSummary.totalRemaining)}
+              </div>
+            </div>
+          </div>
+
+          {/* Progress Bar & Summary Stats */}
+          <div className="p-4 rounded-xl mb-4" style={{ background: C.paper, border: `1px solid ${C.rule}` }}>
+            <div className="flex items-center justify-between text-xs mb-2">
+              <div className="flex items-center gap-2">
+                <span className="font-semibold" style={{ color: C.ink }}>Monthly Clearance Progress</span>
+                <span className="px-1.5 py-0.5 rounded text-xs font-bold" style={{ background: obligationsSummary.percentCleared === 100 ? "#34D39922" : "#3B82F622", color: obligationsSummary.percentCleared === 100 ? "#34D399" : "#3B82F6" }}>
+                  {obligationsSummary.percentCleared.toFixed(0)}% Cleared
+                </span>
+              </div>
+              <div style={{ ...NUM, color: C.muted }}>
+                Paid <span className="font-bold text-emerald-500">{inr(obligationsSummary.totalPaid)}</span> of {inr(obligationsSummary.totalDue)}
+              </div>
+            </div>
+
+            <div className="h-2.5 w-full rounded-full overflow-hidden" style={{ background: C.rule }}>
+              <div
+                className="h-full rounded-full transition-all duration-500"
+                style={{
+                  width: `${obligationsSummary.percentCleared}%`,
+                  background: obligationsSummary.percentCleared === 100
+                    ? "#34D399"
+                    : "linear-gradient(90deg, #3B82F6 0%, #10B981 100%)",
+                }}
+              />
+            </div>
+
+            {obligationsSummary.totalPaid > 0 && (
+              <div className="mt-2 text-xs flex items-center gap-1.5" style={{ color: "#34D399" }}>
+                <span>✨</span>
+                <span>Obligations automatically reduced by <strong>{inr(obligationsSummary.totalPaid)}</strong> this month from your transactions</span>
+              </div>
+            )}
+          </div>
+
+          {/* Grid of Obligations */}
+          <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
+            {obligationsSummary.items.map((item) => {
+              const itemProgress = item.due > 0 ? Math.min(100, (item.paid / item.due) * 100) : 100;
+              return (
+                <div
+                  key={item.id}
+                  className="rounded-xl p-3.5 transition-all"
+                  style={{
+                    background: item.isCleared ? `${C.paper}` : C.paper,
+                    border: `1.5px solid ${item.isCleared ? "#34D39966" : C.rule}`,
+                  }}
+                >
+                  <div className="flex items-start justify-between gap-2 mb-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-lg">{item.emoji}</span>
+                      <div>
+                        <div className="font-semibold text-xs leading-tight" style={{ color: C.ink }}>
+                          {item.name}
+                        </div>
+                        <div className="text-[10px] mt-0.5" style={{ color: C.faint }}>
+                          {item.category}
+                        </div>
+                      </div>
+                    </div>
+                    {item.isCleared ? (
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold shrink-0" style={{ background: "#34D39922", color: "#34D399" }}>
+                        Cleared ✅
+                      </span>
+                    ) : (
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold shrink-0" style={{ background: "#F8717122", color: "#F87171" }}>
+                        {inr(item.remaining)} Due
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Progress bar */}
+                  <div className="h-1.5 w-full rounded-full overflow-hidden mt-1.5" style={{ background: C.rule }}>
+                    <div
+                      className="h-full rounded-full transition-all"
+                      style={{
+                        width: `${itemProgress}%`,
+                        background: item.isCleared ? "#34D399" : "#FBBF24",
+                      }}
+                    />
+                  </div>
+
+                  <div className="flex justify-between items-center text-[10px] mt-1.5" style={{ color: C.muted, ...NUM }}>
+                    <span>Paid: {inr(item.paid)}</span>
+                    <span>Total: {inr(item.due)}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+
 
       {/* Cash flow bar */}
       <div className="rounded-2xl p-5" style={{ background: C.card, border: `1.5px solid ${C.rule}` }}>
@@ -393,18 +666,24 @@ function MonthlyReport({ data, profile, dailyLogs, categories, C }) {
 }
 
 /* ─── Balance Sheet Component ────────────────────────────────────── */
-function BalanceSheetView({ data, profile, portfolio, C }) {
+/* ─── Balance Sheet Component ────────────────────────────────────── */
+function BalanceSheetView({ data, profile, portfolio, banks = [], cash = 0, C }) {
   const d = data;
   const s = d.savings || {};
   const investments = d.investments || [];
   const debts = d.debts || [];
+  const creditCards = d.creditCards || [];
   const assets = d.assets || [];
+
+  // Live bank balance and cash values from profile / state
+  const effectiveBankBalance = typeof profile.bankBalance === "number" ? profile.bankBalance : (s.bankBalance || 0);
+  const effectiveCash = typeof profile.cash === "number" ? profile.cash : (typeof cash === "number" ? cash : (s.cash || 0));
 
   // Assets
   const liquidAssets = [
-    { label: "Bank Balance", value: s.bankBalance || 0 },
+    { label: "Bank Balance", value: effectiveBankBalance },
     { label: "Emergency Fund", value: s.emergencyFund || 0 },
-    { label: "Cash in Hand", value: s.cash || 0 },
+    { label: "Cash in Hand", value: effectiveCash },
     { label: "Fixed Deposits", value: s.fixedDeposits || 0 },
     { label: "Recurring Deposits", value: s.recurringDeposits || 0 },
     { label: "Other Liquid", value: s.otherLiquid || 0 },
@@ -424,12 +703,21 @@ function BalanceSheetView({ data, profile, portfolio, C }) {
     sub: a.kind,
   })).filter((a) => a.value > 0);
 
-  // Liabilities
-  const liabilities = debts.filter((d) => d.outstanding > 0).map((d) => ({
+  // Liabilities: Loans & Debts
+  const loanLiabilities = debts.filter((d) => d.outstanding > 0).map((d) => ({
     label: d.name,
     value: d.outstanding || 0,
     sub: `${d.annualInterestRatePct}% p.a. · EMI ${inr(d.emi)}/mo`,
   }));
+
+  // Liabilities: Credit Cards
+  const ccLiabilities = creditCards.filter((c) => (Number(c.currentOutstanding) || 0) > 0).map((c) => ({
+    label: `${c.bank || ""} ${c.name || "Credit Card"}`.trim(),
+    value: Number(c.currentOutstanding) || 0,
+    sub: `Due: Day ${c.dueDay || 1} · Limit: ${inr(c.limit)}`,
+  }));
+
+  const allLiabilities = [...loanLiabilities, ...ccLiabilities];
 
   const netWorth = profile.netWorth;
   const isPositive = netWorth >= 0;
@@ -551,15 +839,15 @@ function BalanceSheetView({ data, profile, portfolio, C }) {
             <span className="text-lg font-black" style={{ ...NUM, color: "#F87171" }}>{inrS(totalDebt)}</span>
           </div>
 
-          {liabilities.length > 0 ? (
-            <BSGroup title="Outstanding Debts" total={totalDebt} color="#F87171" C={C}>
-              {liabilities.map((l) => <BSRow key={l.label} label={l.label} value={l.value} sub={l.sub} color="#F87171" indent C={C} />)}
+          {allLiabilities.length > 0 ? (
+            <BSGroup title="Outstanding Debts & Cards" total={totalDebt} color="#F87171" C={C}>
+              {allLiabilities.map((l) => <BSRow key={l.label} label={l.label} value={l.value} sub={l.sub} color="#F87171" indent C={C} />)}
             </BSGroup>
           ) : (
             <div className="flex items-center justify-center py-8 mb-4 rounded-xl" style={{ background: "#065F4622" }}>
               <div className="text-center">
                 <div className="text-3xl">🎉</div>
-                <p className="text-sm font-semibold mt-2" style={{ color: "#34D399" }}>Debt Free!</p>
+                <p className="text-sm font-semibold mt-2" style={{ color: "#34D399" }}>Debt & Card Free!</p>
               </div>
             </div>
           )}
@@ -709,7 +997,7 @@ const VIEWS = [
   { id: "report", label: "Monthly Report" },
 ];
 
-export default function BalanceSheetTab({ data, profile, dailyLogs, categories, portfolio }) {
+export default function BalanceSheetTab({ data, profile, dailyLogs, categories, portfolio, banks = [], cash = 0 }) {
   const C = useContext(ThemeContext);
   const [view, setView] = useState("balance");
   const monthLabel = getMonthLabel(0);
@@ -740,8 +1028,8 @@ export default function BalanceSheetTab({ data, profile, dailyLogs, categories, 
         </div>
       </div>
 
-      {view === "balance" && <BalanceSheetView data={data} profile={profile} portfolio={portfolio} C={C} />}
-      {view === "report" && <MonthlyReport data={data} profile={profile} dailyLogs={dailyLogs} categories={categories} C={C} />}
+      {view === "balance" && <BalanceSheetView data={data} profile={profile} portfolio={portfolio} banks={banks} cash={cash} C={C} />}
+      {view === "report" && <MonthlyReport data={data} profile={profile} dailyLogs={dailyLogs} categories={categories} banks={banks} cash={cash} C={C} />}
     </div>
   );
 }

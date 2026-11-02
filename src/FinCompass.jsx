@@ -383,6 +383,7 @@ function deriveProfile(d) {
   const income = (d.cashFlow?.monthlySalary || 0) + (d.cashFlow?.otherMonthlyIncome || 0);
   const living = sumExpenses(d.cashFlow?.expenses);
   const debts = d.debts || [];
+  const creditCards = d.creditCards || [];
   const investments = d.investments || [];
   const assets = d.assets || [];
 
@@ -391,15 +392,22 @@ function deriveProfile(d) {
   const surplus = income - living - emi - sip;
 
   const s = d.savings || {};
-  const cashLike = (s.bankBalance || 0) + (s.emergencyFund || 0) + (s.fixedDeposits || 0) +
-    (s.recurringDeposits || 0) + (s.cash || 0) + (s.otherLiquid || 0);
+  const totalBank = Array.isArray(d.banks)
+    ? d.banks.reduce((acc, b) => acc + (Number(b.balance) || 0), 0)
+    : (s.bankBalance || 0);
+  const totalCash = typeof d.cash === "number" ? d.cash : (s.cash || 0);
+  const cashLike = totalBank + (s.emergencyFund || 0) + (s.fixedDeposits || 0) +
+    (s.recurringDeposits || 0) + totalCash + (s.otherLiquid || 0);
+
   const totalInvestments = investments.reduce((a, x) => a + (x.currentValue || 0), 0);
-  const totalDebt = debts.reduce((a, x) => a + Math.max(0, x.outstanding || 0), 0);
+  const totalLoanDebt = debts.reduce((a, x) => a + Math.max(0, x.outstanding || 0), 0);
+  const creditCardDebt = creditCards.reduce((a, x) => a + Math.max(0, Number(x.currentOutstanding) || 0), 0);
+  const totalDebt = totalLoanDebt + creditCardDebt;
   const otherAssets = assets.reduce((a, x) => a + (x.currentValue || 0), 0);
   const totalAssets = cashLike + totalInvestments + otherAssets;
 
   const efMonthsTarget = recommendedEmergencyMonths(d);
-  const efCover = (s.emergencyFund || 0) + (s.bankBalance || 0) + (s.cash || 0);
+  const efCover = (s.emergencyFund || 0) + totalBank + totalCash;
   const efMonths = living > 0 ? efCover / living : 0;
   const efTarget = Math.round(living * efMonthsTarget);
 
@@ -427,9 +435,15 @@ function deriveProfile(d) {
     emiToIncomePct: income > 0 ? (emi / income) * 100 : 0,
     debtToIncomePct: income > 0 ? (totalDebt / (income * 12)) * 100 : 0,
     liquidSavings: cashLike,
+    bankBalance: totalBank,
+    cash: totalCash,
     efCover, efMonths, efMonthsTarget, efTarget,
     efGap: Math.max(0, efTarget - efCover),
-    totalInvestments, totalDebt, totalAssets,
+    totalInvestments,
+    totalLoanDebt,
+    creditCardDebt,
+    totalDebt,
+    totalAssets,
     totalLiabilities: totalDebt,
     netWorth: totalAssets - totalDebt,
     expectedReturn, weightedDebtRate,
@@ -3825,12 +3839,32 @@ function FinCompassApp() {
       }));
     }
 
-    // Auto-link EMI: reduce debt outstanding
-    if (entry.debtId && entry.amount > 0) {
+    // Auto-link EMI / Loan repayment: reduce debt outstanding
+    let debtTargetId = entry.debtId;
+    if (!debtTargetId && (entry.catId === "emi" || (entry.note || "").toLowerCase().includes("emi") || (entry.note || "").toLowerCase().includes("loan"))) {
+      setData((prev) => {
+        const active = (prev.debts || []).filter((d) => d.outstanding > 0);
+        const matched = active.find((d) => (entry.note || "").toLowerCase().includes((d.name || "").toLowerCase())) ||
+          (active.length === 1 ? active[0] : null);
+        if (!matched) return prev;
+        return {
+          ...prev,
+          debts: (prev.debts || []).map((d) =>
+            d.id === matched.id
+              ? {
+                  ...d,
+                  outstanding: Math.max(0, (d.outstanding || 0) - entry.amount),
+                  remainingTenureMonths: Math.max(0, (d.remainingTenureMonths || 0) - (entry.amount >= (d.emi || 0) * 0.9 ? 1 : 0)),
+                }
+              : d
+          ),
+        };
+      });
+    } else if (debtTargetId && entry.amount > 0) {
       setData((prev) => ({
         ...prev,
         debts: (prev.debts || []).map((d) =>
-          d.id === entry.debtId
+          d.id === debtTargetId
             ? {
                 ...d,
                 outstanding: Math.max(0, (d.outstanding || 0) - entry.amount),
@@ -3838,6 +3872,23 @@ function FinCompassApp() {
               }
             : d
         ),
+      }));
+    }
+
+    // Auto-link Recurring Deposit (RD): increases recurring deposit savings asset
+    const noteLower = (entry.note || "").toLowerCase();
+    const isRd = entry.isRecurringDeposit ||
+      entry.billId === "rd" ||
+      (entry.catId === "investment" && (noteLower.includes("recurring deposit") || noteLower.includes(" rd") || noteLower.startsWith("rd"))) ||
+      noteLower.includes("recurring deposit");
+
+    if (isRd && entry.amount > 0) {
+      setData((prev) => ({
+        ...prev,
+        savings: {
+          ...prev.savings,
+          recurringDeposits: (Number(prev.savings?.recurringDeposits) || 0) + entry.amount,
+        },
       }));
     }
 
@@ -3968,6 +4019,44 @@ function FinCompassApp() {
               }
             : d
         ),
+      }));
+    } else if (target && target.amount > 0 && (target.catId === "emi" || (target.note || "").toLowerCase().includes("emi") || (target.note || "").toLowerCase().includes("loan"))) {
+      // Revert auto-matched debt
+      const noteLower = (target.note || "").toLowerCase();
+      setData((prev) => {
+        const debts = prev.debts || [];
+        const matched = debts.find((d) => noteLower.includes((d.name || "").toLowerCase())) ||
+          (debts.length === 1 ? debts[0] : null);
+        if (!matched) return prev;
+        return {
+          ...prev,
+          debts: debts.map((d) =>
+            d.id === matched.id
+              ? {
+                  ...d,
+                  outstanding: (d.outstanding || 0) + target.amount,
+                  remainingTenureMonths: (d.remainingTenureMonths || 0) + (target.amount >= (d.emi || 0) * 0.9 ? 1 : 0),
+                }
+              : d
+          ),
+        };
+      });
+    }
+
+    // Revert Recurring Deposit (RD) savings if linked
+    const targetNoteLower = (target?.note || "").toLowerCase();
+    const isTargetRd = target?.isRecurringDeposit ||
+      target?.billId === "rd" ||
+      (target?.catId === "investment" && (targetNoteLower.includes("recurring deposit") || targetNoteLower.includes(" rd") || targetNoteLower.startsWith("rd"))) ||
+      targetNoteLower.includes("recurring deposit");
+
+    if (target && isTargetRd && target.amount > 0) {
+      setData((prev) => ({
+        ...prev,
+        savings: {
+          ...prev.savings,
+          recurringDeposits: Math.max(0, (Number(prev.savings?.recurringDeposits) || 0) - target.amount),
+        },
       }));
     }
 
@@ -4283,7 +4372,7 @@ function FinCompassApp() {
   }, [data, handleSyncError]);
 
   const C = useMemo(() => (isDark ? DARK_THEME : LIGHT_THEME), [isDark]);
-  const profile = useMemo(() => deriveProfile(data), [data]);
+  const profile = useMemo(() => deriveProfile({ ...data, banks, cash }), [data, banks, cash]);
   const health = useMemo(() => healthScore(data, profile), [data, profile]);
   const recs = useMemo(() => recommend(data, profile, health), [data, profile, health]);
   const alerts = useMemo(() => generateAlerts(data, profile), [data, profile]);
@@ -4579,6 +4668,8 @@ function FinCompassApp() {
               dailyLogs={dailyLogs}
               categories={categories}
               portfolio={portfolio}
+              banks={banks}
+              cash={cash}
             />
           )}
           {tab === "banks" && (
